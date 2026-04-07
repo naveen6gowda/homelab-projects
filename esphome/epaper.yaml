@@ -1,0 +1,303 @@
+esphome:
+  name: epaper
+  friendly_name: EPaper
+  on_boot:
+    priority: -100
+    then:
+      - delay: 10s
+      - component.update: epaper_display
+
+
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+
+
+logger:
+  level: DEBUG
+
+
+
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+
+
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+
+
+wifi:
+  ssid: YOUR_WIFI_SSID
+  password: YOUR_WIFI_PASSWORD
+  power_save_mode: NONE
+  fast_connect: true
+  output_power: 13dB
+  reboot_timeout: 15min
+  ap:
+    ssid: "Epaper Fallback Hotspot"
+    password: "YOUR_AP_PASSWORD"
+
+
+
+captive_portal:
+
+
+
+# Use SNTP for reliable time (Home Assistant time doesn't support now())
+time:
+  - platform: sntp
+    id: esptime
+    timezone: Europe/Berlin
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org
+    on_time_sync:
+      - logger.log: "Time synced from NTP"
+
+
+
+binary_sensor:
+  - platform: status
+    name: "System Status"
+    id: system_status
+
+
+
+sensor:
+  # Home Assistant sensors - NO update_interval allowed
+  - platform: homeassistant
+    id: indoor_temp
+    entity_id: sensor.s3_dashboard_room_temperature
+  
+  - platform: homeassistant
+    id: indoor_humidity
+    entity_id: sensor.s3_dashboard_room_humidity
+  
+  - platform: homeassistant
+    id: co2_level
+    entity_id: sensor.s3_dashboard_room_co2
+  
+  - platform: homeassistant
+    id: outdoor_temp
+    entity_id: weather.home
+    attribute: temperature
+  
+  - platform: homeassistant
+    id: outdoor_humidity
+    entity_id: weather.forecast_home
+    attribute: humidity
+
+  - platform: homeassistant
+    id: eur_inr_rate
+    entity_id: sensor.eur_to_inr_rate
+
+
+
+text_sensor:
+  - platform: homeassistant
+    id: weather_state
+    entity_id: weather.home
+  
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: ip_addr
+  
+  - platform: homeassistant
+    id: cricket_score
+    entity_id: sensor.cricket_score_display
+    on_value:
+      then:
+        - lambda: |-
+            ESP_LOGD("cricket", "Cricket score value: '%s'", x.c_str());
+
+
+spi:
+  clk_pin: GPIO6
+  mosi_pin: GPIO7
+
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 14
+  
+  - file: "gfonts://Roboto@700"
+    id: font_medium
+    size: 20
+  
+  - file: "gfonts://Roboto@700"
+    id: font_large
+    size: 28
+  
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 10
+  
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: font_icons
+    size: 48
+    glyphs:
+      - "\U000F0590"  # cloudy
+      - "\U000F0591"  # fog
+      - "\U000F0592"  # hail
+      - "\U000F0593"  # lightning
+      - "\U000F067E"  # lightning-rainy
+      - "\U000F0594"  # night
+      - "\U000F0F31"  # night-partly-cloudy
+      - "\U000F0595"  # partly-cloudy
+      - "\U000F0596"  # pouring
+      - "\U000F0597"  # rainy
+      - "\U000F0598"  # snowy
+      - "\U000F067F"  # snowy-rainy
+      - "\U000F0599"  # sunny
+      - "\U000F059D"  # windy
+
+
+
+
+display:
+  - platform: waveshare_epaper
+    id: epaper_display
+    model: 2.90inv2-r2
+    cs_pin: GPIO10
+    dc_pin: GPIO1
+    reset_pin: GPIO9
+    busy_pin: GPIO4
+    rotation: 270
+    update_interval: 15sec
+    lambda: |-
+      // Clear screen
+      it.rectangle(0, 0, 296, 128);
+
+      // EUR to INR rate - display on LEFT side of clock
+      if (id(eur_inr_rate).has_state()) {
+        it.printf(85, 8, id(font_small), TextAlign::TOP_RIGHT, "E->R %.2f", id(eur_inr_rate).state);
+      }
+      
+      // Time and date - cache now() once, guard against unsynced NTP
+      auto t = id(esptime).now();
+      if (t.is_valid()) {
+        it.strftime(148, 5, id(font_large), TextAlign::TOP_CENTER, "%I:%M", t);
+        it.strftime(148, 36, id(font_small), TextAlign::TOP_CENTER, "%A, %d %B", t);
+      } else {
+        it.print(148, 5, id(font_large), TextAlign::TOP_CENTER, "--:--");
+        it.print(148, 36, id(font_small), TextAlign::TOP_CENTER, "Syncing...");
+      }
+      
+      // Cricket score - display to the right of clock if match is active
+      if (id(cricket_score).has_state()) {
+      std::string score = id(cricket_score).state;
+      // Check if the string contains "No Match"
+      if (score.find("No Match") == std::string::npos && score.find("no match") == std::string::npos) {
+      ESP_LOGD("cricket", "Score length: %d", score.length());
+      ESP_LOGD("cricket", "Score content: '%s'", score.c_str());
+      // Force split into two lines at midpoint
+      if (score.length() > 20) {
+      size_t split_pos = score.length() / 2;
+      // Try to find a space near the midpoint for cleaner break
+      size_t space_pos = score.rfind('v', split_pos + 10);
+      if (space_pos != std::string::npos && space_pos > split_pos - 10) {
+        split_pos = space_pos + 1;
+      }
+      
+      std::string line1 = score.substr(0, split_pos);
+      std::string line2 = score.substr(split_pos);
+      it.printf(200, 8, id(font_tiny), TextAlign::TOP_LEFT, "%s", line1.c_str());
+      it.printf(200, 18, id(font_tiny), TextAlign::TOP_LEFT, "%s", line2.c_str());
+      } else {
+      // Short text, single line
+      it.printf(200, 8, id(font_tiny), TextAlign::TOP_LEFT, "%s", score.c_str());
+      }
+      }
+      }
+      
+      // Divider
+      it.line(0, 55, 296, 55);
+      
+      // Weather icon
+      if (id(weather_state).has_state()) {
+        std::string weather = id(weather_state).state;
+        std::string icon = "";
+        
+        ESP_LOGD("display", "Weather state: %s", weather.c_str());
+        
+        if (weather == "sunny" || weather == "clear-night") {
+          icon = "\U000F0599";
+        } else if (weather == "cloudy") {
+          icon = "\U000F0590";
+        } else if (weather == "partlycloudy" || weather.find("partly") != std::string::npos) {
+          icon = "\U000F0595";
+        } else if (weather == "rainy") {
+          icon = "\U000F0597";
+        } else if (weather == "pouring") {
+          icon = "\U000F0596";
+        } else if (weather == "snowy") {
+          icon = "\U000F0598";
+        } else if (weather == "fog") {
+          icon = "\U000F0591";
+        } else if (weather == "windy") {
+          icon = "\U000F059D";
+        } else {
+          icon = "\U000F0590";  // default cloudy
+        }
+        
+        if (icon != "") {
+          it.printf(20, 73, id(font_icons), TextAlign::TOP_LEFT, "%s", icon.c_str());
+        }
+      }
+      
+      // Outdoor data with fallbacks
+      it.print(14, 60, id(font_small), "Outdoor:");
+      if (id(outdoor_temp).has_state()) {
+        it.printf(76, 75, id(font_medium), "%.1fÂ°C", id(outdoor_temp).state);
+      } else {
+        it.print(76, 75, id(font_small), "--Â°C");
+      }
+      
+      if (id(outdoor_humidity).has_state()) {
+        it.printf(76, 97, id(font_small), "Hum: %.0f%%", id(outdoor_humidity).state);
+      } else {
+        it.print(76, 97, id(font_small), "Hum: --%");
+      }
+      
+      // Vertical divider
+      it.line(150, 55, 150, 128);
+      
+      // Indoor data with fallbacks
+      it.print(160, 60, id(font_small), "Indoor:");
+      if (id(indoor_temp).has_state()) {
+        it.printf(178, 75, id(font_medium), "%.1fÂ°C", id(indoor_temp).state);
+      } else {
+        it.print(178, 75, id(font_small), "--Â°C");
+      }
+      
+      if (id(indoor_humidity).has_state()) {
+        it.printf(178, 95, id(font_small), "Hum: %.0f%%", id(indoor_humidity).state);
+      } else {
+        it.print(178, 95, id(font_small), "Hum: --%");
+      }
+      
+      // CO2 with fallback
+      if (id(co2_level).has_state()) {
+        it.printf(178, 109, id(font_small), "CO2: %.0f ppm", id(co2_level).state);
+      } else {
+        it.printf(178, 109, id(font_small), "CO2: -- ppm");
+      }
+      
+      // Status indicators
+      if (id(system_status).state) {
+        it.printf(274, 112, id(font_tiny), "");
+      } else {
+        it.printf(274, 112, id(font_tiny), "ERR");
+      }
+
+

@@ -1,0 +1,591 @@
+substitutions:
+  name: "esphome-dashboard"
+  friendly_name: "S3 Dashboard"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: dio
+    parallel_build_jobs: 2
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_AUDIO_BOARD_CUSTOM: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: WARN
+
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+  reboot_timeout: 15min
+  on_client_connected:
+    then:
+      - delay: 1s
+      - if:
+          condition:
+            switch.is_off: mute
+          then:
+            - micro_wake_word.start:
+  on_client_disconnected:
+    then:
+      - voice_assistant.stop:
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+wifi:
+  ssid: "YOUR_WIFI_SSID"
+  password: "YOUR_WIFI_PASSWORD"
+  power_save_mode: NONE
+  fast_connect: true
+  reboot_timeout: 3min
+  ap:
+    ssid: "Touch-Voice-Assistant"
+    password: "YOUR_AP_PASSWORD"
+
+captive_portal:
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org
+
+i2c:
+  sda: GPIO1
+  scl: GPIO2
+  scan: false
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+  miso_pin: GPIO13
+
+# ---------------------------------------------------------
+# VOICE ASSISTANT AUDIO (Single I2S bus)
+# ---------------------------------------------------------
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: GPIO5
+    i2s_bclk_pin: GPIO4
+
+microphone:
+  - platform: i2s_audio
+    id: va_mic
+    adc_type: external
+    i2s_din_pin: GPIO7
+    channel: left
+    pdm: false
+    i2s_audio_id: i2s_bus
+    bits_per_sample: 32bit
+
+speaker:
+  - platform: i2s_audio
+    id: va_speaker
+    i2s_audio_id: i2s_bus
+    dac_type: external
+    i2s_dout_pin: GPIO6
+    channel: mono
+
+voice_assistant:
+  id: va
+  microphone: va_mic
+  speaker: va_speaker
+  noise_suppression_level: 4.0   # IMPROVED: was 2.0 -- maximum noise suppression
+  volume_multiplier: 6.0          # IMPROVED: was 4.0 -- increased mic sensitivity
+
+  on_listening:
+    - lambda: id(voice_state) = 1;
+  on_stt_vad_end:
+    - lambda: id(voice_state) = 2;
+  on_tts_start:
+    - lambda: id(voice_state) = 3;
+  on_end:
+    - lambda: id(voice_state) = 0;
+    - wait_until:
+        not:
+          voice_assistant.is_running:
+    - if:
+        condition:
+          switch.is_off: mute
+        then:
+          - micro_wake_word.start:
+  on_error:
+    - lambda: id(voice_state) = 4;
+    - if:
+        condition:
+          switch.is_off: mute
+        then:
+          - micro_wake_word.start:
+
+micro_wake_word:
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+    - lambda: |-
+        ESP_LOGI("WAKE", "Detected: Okay Nabu");
+        id(voice_state) = 1;
+  models:
+    - model: okay_nabu
+
+
+# Mute switch
+switch:
+  - platform: template
+    id: mute
+    name: "Mute Voice Assistant"
+    optimistic: true
+    on_turn_on:
+      - micro_wake_word.stop:
+      - voice_assistant.stop:
+      - lambda: id(voice_state) = 0;
+    on_turn_off:
+      - micro_wake_word.start:
+
+
+
+# ---------------------------------------------------------
+# GLOBALS
+# ---------------------------------------------------------
+globals:
+  - id: anim_btn1
+    type: int
+    initial_value: '0'
+  - id: anim_btn2
+    type: int
+    initial_value: '0'
+  - id: anim_btn3
+    type: int
+    initial_value: '0'
+  - id: anim_btn4
+    type: int
+    initial_value: '0'
+  - id: anim_btn5
+    type: int
+    initial_value: '0'
+  - id: voice_state
+    type: int
+    initial_value: '0'
+  - id: mail_dismissed
+    type: bool
+    initial_value: 'false'
+    restore_value: true
+  - id: last_mail_count
+    type: int
+    initial_value: '0'
+    restore_value: true
+  - id: washer_dismissed
+    type: bool
+    initial_value: 'false'
+
+# ---------------------------------------------------------
+# FONTS
+# ---------------------------------------------------------
+font:
+  - file: "gfonts://Roboto"
+    id: font_header
+    size: 24
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 20
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 10
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 15
+
+# ---------------------------------------------------------
+# DISPLAY
+# ---------------------------------------------------------
+display:
+  - platform: ili9xxx
+    model: ILI9341
+    cs_pin: GPIO10
+    dc_pin: GPIO9
+    reset_pin: GPIO14
+    rotation: 90
+    id: my_display
+    invert_colors: false
+    pages:
+      - id: page1
+        lambda: |-
+          it.fill(Color::BLACK);
+
+          // Header
+          it.printf(10, 5, id(font_body), "Temp: %.1f C", id(temp_sensor).has_state() ? id(temp_sensor).state : 0.0);
+          it.printf(165, 5, id(font_body), "Hum: %.0f%%", id(hum_sensor).has_state() ? id(hum_sensor).state : 0.0);
+
+          // CO2 - COLOR CODED by air quality level
+          {
+            Color co2c = Color(120, 120, 120);
+            if (id(co2_sensor).has_state()) {
+              float co2v = id(co2_sensor).state;
+              if (co2v < 800)       co2c = Color(0, 230, 100);   // Good: green
+              else if (co2v < 1200) co2c = Color(255, 200, 0);   // Fair: yellow
+              else                  co2c = Color(255, 60, 0);     // Bad: red-orange
+            }
+            it.printf(10, 30, id(font_body), co2c, "CO2: %.0f ppm", id(co2_sensor).has_state() ? id(co2_sensor).state : 0.0f);
+          }
+
+          // Time in free space - COLOR by time of day
+          {
+            auto t = id(sntp_time).now();
+            Color tc;
+            if (t.is_valid()) {
+              int hr = t.hour;
+              if (hr >= 5 && hr < 9)        tc = Color(255, 200, 100);   // morning: warm gold
+              else if (hr >= 9 && hr < 17)  tc = Color(100, 220, 255);   // day: cool blue
+              else if (hr >= 17 && hr < 21) tc = Color(255, 140, 50);    // evening: orange
+              else                           tc = Color(180, 100, 255);   // night: purple
+            } else { tc = Color(100, 100, 100); }
+            it.strftime(185, 30, id(font_body), tc, "%I:%M", id(sntp_time).now());
+          }
+
+
+          // --- HEADER ICONS (Aligned to Right Corner) ---
+
+          // 1. Washing Machine (Position: x=259)
+          if (id(washer_state).state == false && id(washer_dismissed) == false) {
+             it.rectangle(259, 15, 15, 22, Color(0, 255, 0)); // Body
+             it.circle(266, 28, 4, Color(0, 255, 0));        // Drum (centered in body)
+          }
+
+          // 2. Mailbox alert icon (top-right, x=285-315)
+          if (id(ha_mail_count).state > 0 && id(mail_dismissed) == false) {
+             it.filled_rectangle(285, 10, 30, 20, Color(0, 200, 0)); // Filled envelope body
+             it.line(285, 10, 300, 22, Color(0, 0, 0));              // Flap left
+             it.line(315, 10, 300, 22, Color(0, 0, 0));              // Flap right
+          } else {
+             it.rectangle(285, 10, 30, 20, Color(50, 50, 50));       // Dim outline when no mail
+          }
+
+          if (id(co2_sensor).has_state()) {
+             Color dot_color = (id(co2_sensor).state > 1000) ? Color(255, 0, 0) : Color(0, 255, 0);
+             it.filled_circle(150, 40, 6, dot_color);
+          }
+
+          // Divider line + CPU power (larger font for readability)
+          it.line(0, 52, 320, 52, Color(80, 80, 80));
+          if (id(ryzen_power).has_state()) {
+            it.printf(10, 54, id(font_medium), Color(100, 200, 255), "CPU: %.1fW", id(ryzen_power).state);
+          } else {
+            it.print(10, 54, id(font_medium), Color(80, 80, 80), "CPU: --");
+          }
+
+          int y_row1 = 72;
+          int y_row2 = 153;
+          int w = 100;
+          int h = 80;
+          int gap = 5;
+
+          // BUTTON 1 - Hall Light (top left)
+          int pad1 = (id(anim_btn1) > 0) ? 4 : 0;
+          if (id(anim_btn1) > 0) id(anim_btn1) -= 1;
+          int b1_x = gap + pad1;
+          int b1_y = y_row1 + pad1;
+          if (id(ha_light_status).state) {
+            it.filled_rectangle(b1_x, b1_y, w - pad1*2, h - pad1*2, Color(255, 210, 0));
+            it.filled_circle(b1_x + 20, b1_y + 40, 12, Color::WHITE);
+            it.print(b1_x + 40, b1_y + 30, id(font_body), Color::BLACK, "HALL");
+          } else {
+            it.filled_rectangle(b1_x, b1_y, w - pad1*2, h - pad1*2, Color(50, 50, 50));
+            it.circle(b1_x + 20, b1_y + 40, 12, Color::WHITE);
+            it.print(b1_x + 40, b1_y + 30, id(font_body), Color::WHITE, "HALL");
+          }
+
+          // BUTTON 2 - Bedroom (top middle)
+          int pad2 = (id(anim_btn2) > 0) ? 4 : 0;
+          if (id(anim_btn2) > 0) id(anim_btn2) -= 1;
+          int b2_x = gap + w + gap + pad2;
+          int b2_y = y_row1 + pad2;
+          if (id(ha_entity_2).state) {
+            it.filled_rectangle(b2_x, b2_y, w - pad2*2, h - pad2*2, Color(255, 210, 0));
+            it.filled_circle(b2_x + 20, b2_y + 40, 12, Color::WHITE);
+            it.print(b2_x + 40, b2_y + 30, id(font_body), Color::BLACK, "BED");
+          } else {
+            it.filled_rectangle(b2_x, b2_y, w - pad2*2, h - pad2*2, Color(50, 50, 50));
+            it.circle(b2_x + 20, b2_y + 40, 12, Color::WHITE);
+            it.print(b2_x + 40, b2_y + 30, id(font_body), Color::WHITE, "BED");
+          }
+
+          // BUTTON 3 - Passage (top right)
+          int pad3 = (id(anim_btn3) > 0) ? 4 : 0;
+          if (id(anim_btn3) > 0) id(anim_btn3) -= 1;
+          int b3_x = gap + 2*w + 2*gap + pad3;
+          int b3_y = y_row1 + pad3;
+          if (id(ha_entity_3).state) {
+            it.filled_rectangle(b3_x, b3_y, w - pad3*2, h - pad3*2, Color(0, 200, 255));
+            it.filled_rectangle(b3_x + 15, b3_y + 30, 18, 18, Color::WHITE);
+            it.print(b3_x + 40, b3_y + 30, id(font_body), Color::BLACK, "PASS");
+          } else {
+            it.filled_rectangle(b3_x, b3_y, w - pad3*2, h - pad3*2, Color(50, 50, 50));
+            it.rectangle(b3_x + 15, b3_y + 30, 18, 18, Color::WHITE);
+            it.print(b3_x + 40, b3_y + 30, id(font_body), Color::WHITE, "PASS");
+          }
+
+          // BUTTON 4 - TV (bottom left)
+          int pad4 = (id(anim_btn4) > 0) ? 4 : 0;
+          if (id(anim_btn4) > 0) id(anim_btn4) -= 1;
+          int b4_x = gap + pad4;
+          int b4_y = y_row2 + pad4;
+          if (id(ha_entity_4).state) {
+            it.filled_rectangle(b4_x, b4_y, w - pad4*2, h - pad4*2, Color(0, 255, 120));
+            it.filled_rectangle(b4_x + 12, b4_y + 30, 25, 18, Color::BLACK);
+            it.print(b4_x + 45, b4_y + 30, id(font_body), Color::BLACK, "TV");
+          } else {
+            it.filled_rectangle(b4_x, b4_y, w - pad4*2, h - pad4*2, Color(50, 50, 50));
+            it.rectangle(b4_x + 12, b4_y + 30, 25, 18, Color::WHITE);
+            it.print(b4_x + 45, b4_y + 30, id(font_body), Color::WHITE, "TV");
+          }
+
+          // BUTTON 5 - NEW (bottom middle)
+          int pad5 = (id(anim_btn5) > 0) ? 4 : 0;
+          if (id(anim_btn5) > 0) id(anim_btn5) -= 1;
+          int b5_x = gap + w + gap + pad5;
+          int b5_y = y_row2 + pad5;
+          if (id(ha_entity_5).state) {
+            it.filled_rectangle(b5_x, b5_y, w - pad5*2, h - pad5*2, Color(255, 120, 210));
+            it.filled_circle(b5_x + 20, b5_y + 40, 12, Color::WHITE);
+            it.print(b5_x + 40, b5_y + 30, id(font_body), Color::BLACK, "BKLT");
+          } else {
+            it.filled_rectangle(b5_x, b5_y, w - pad5*2, h - pad5*2, Color(50, 50, 50));
+            it.circle(b5_x + 20, b5_y + 40, 12, Color::WHITE);
+            it.print(b5_x + 40, b5_y + 30, id(font_body), Color::WHITE, "BKLT");
+          }
+
+          // --- SPLIT CLEAR BUTTONS ---
+          int b6_x = gap + 2*w + 2*gap;
+          int split_w = (w / 2) - 2;
+
+          // Clear Wash
+          it.filled_rectangle(b6_x, y_row2, split_w, h, Color(60, 0, 0));
+          it.print(b6_x + 5, y_row2 + 30, id(font_body), Color::WHITE, "CLR");
+          it.print(b6_x + 5, y_row2 + 50, id(font_body), Color::WHITE, "WSH");
+
+          // Clear Mail
+          int b7_x = b6_x + split_w + 4;
+          it.filled_rectangle(b7_x, y_row2, split_w, h, Color(0, 0, 60));
+          it.print(b7_x + 5, y_row2 + 30, id(font_body), Color::WHITE, "CLR");
+          it.print(b7_x + 5, y_row2 + 50, id(font_body), Color::WHITE, "MAL");
+
+# ---------------------------------------------------------
+# TOUCHSCREEN
+# ---------------------------------------------------------
+touchscreen:
+  - platform: xpt2046
+    cs_pin: GPIO15
+    update_interval: 50ms
+    calibration:
+      x_min: 200
+      x_max: 3900
+      y_min: 200
+      y_max: 3900
+    transform:
+      swap_xy: true
+
+binary_sensor:
+  - platform: homeassistant
+    name: "Living Room Light Status"
+    entity_id: light.hall_light
+    id: ha_light_status
+  - platform: homeassistant
+    name: "Bedroom Light Status"
+    entity_id: switch.relay_controler_switch_2
+    id: ha_entity_2
+  - platform: homeassistant
+    name: "Passage Light Status"
+    entity_id: switch.relay_controler_switch
+    id: ha_entity_3
+  - platform: homeassistant
+    name: "TV Status"
+    entity_id: switch.tv_socket_1
+    id: ha_entity_4
+  - platform: homeassistant
+    name: "BackLight"
+    entity_id: switch.smart_plug_10_socket_1
+    id: ha_entity_5
+  - platform: homeassistant
+    entity_id: input_boolean.washer_running
+    id: washer_state
+    on_state:
+      then:
+        # If the washer starts running again, reset the dismissal
+        - if:
+            condition:
+              lambda: 'return id(washer_state).state == true;'
+            then:
+              - lambda: 'id(washer_dismissed) = false;'
+
+  # Touch zones
+  - platform: touchscreen
+    name: "Hall Light"
+    x_min: 5
+    x_max: 105
+    y_min: 72
+    y_max: 152
+    page_id: page1
+    on_press:
+      then:
+        - lambda: "id(anim_btn1) = 5;"
+        - homeassistant.service:
+            service: light.toggle
+            data:
+              entity_id: light.hall_light
+
+  - platform: touchscreen
+    name: "Bed Room Light"
+    x_min: 110
+    x_max: 210
+    y_min: 72
+    y_max: 152
+    page_id: page1
+    on_press:
+      then:
+        - lambda: "id(anim_btn2) = 5;"
+        - homeassistant.service:
+            service: switch.toggle
+            data:
+              entity_id: switch.relay_controler_switch_2
+
+  - platform: touchscreen
+    name: "Passage light"
+    x_min: 215
+    x_max: 315
+    y_min: 72
+    y_max: 152
+    page_id: page1
+    on_press:
+      then:
+        - lambda: "id(anim_btn3) = 5;"
+        - homeassistant.service:
+            service: switch.toggle
+            data:
+              entity_id: switch.relay_controler_switch
+
+  - platform: touchscreen
+    name: "TV Stand"
+    x_min: 5
+    x_max: 105
+    y_min: 153
+    y_max: 233
+    page_id: page1
+    on_press:
+      then:
+        - lambda: "id(anim_btn4) = 5;"
+        - homeassistant.service:
+            service: switch.toggle
+            data:
+              entity_id: switch.tv_socket_1
+
+  - platform: touchscreen
+    name: "BackLight"
+    x_min: 110
+    x_max: 210
+    y_min: 153
+    y_max: 233
+    page_id: page1
+    on_press:
+      then:
+        - lambda: "id(anim_btn5) = 5;"
+        - homeassistant.service:
+            service: switch.toggle
+            data:
+              entity_id: switch.smart_plug_10_socket_1
+
+  # Clear Washing Machine Icon Locally
+  - platform: touchscreen
+    name: "Clear Wash Alert"
+    x_min: 215
+    x_max: 260
+    y_min: 153
+    y_max: 233
+    on_press:
+      then:
+        - lambda: 'id(washer_dismissed) = true;'
+
+  # Clear Mailbox Icon Locally
+  - platform: touchscreen
+    name: "Clear Mail Alert"
+    x_min: 265
+    x_max: 315
+    y_min: 153
+    y_max: 233
+    on_press:
+      then:
+        - lambda: 'id(mail_dismissed) = true;'
+
+  # Manual test button
+  - platform: touchscreen
+    name: "Voice Test"
+    x_min: 280
+    x_max: 320
+    y_min: 0
+    y_max: 50
+    page_id: page1
+    on_press:
+      - voice_assistant.start:
+
+# ---------------------------------------------------------
+# SENSORS
+# ---------------------------------------------------------
+sensor:
+  - platform: aht10
+    variant: AHT20
+    temperature:
+      name: "Room Temperature"
+      id: temp_sensor
+    humidity:
+      name: "Room Humidity"
+      id: hum_sensor
+    update_interval: 60s
+
+  - platform: ens160_i2c
+    address: 0x53
+    eco2:
+      name: "Room CO2"
+      id: co2_sensor
+    tvoc:
+      name: "Room TVOC"
+    aqi:
+      name: "Room AQI"
+    compensation:
+      temperature: temp_sensor
+      humidity: hum_sensor
+    update_interval: 60s
+
+  - platform: homeassistant
+    entity_id: sensor.mailbox_alert_mail_count
+    id: ha_mail_count
+    on_value:
+      then:
+        - lambda: |-
+            if ((int)x > id(last_mail_count)) {
+              id(mail_dismissed) = false;
+            }
+            id(last_mail_count) = (int)x;
+
+  - platform: homeassistant
+    entity_id: sensor.raspberry_pi_power
+    id: ryzen_power
+    name: "Ryzen Power"
+    unit_of_measurement: "W"
+
+

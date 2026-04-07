@@ -1,0 +1,479 @@
+esphome:
+  name: kitchen-display
+  friendly_name: Kitchen Display
+  # Reboot if no API/WiFi connection for 15 minutes
+  on_boot:
+    priority: 600
+    then:
+      - logger.log: "Kitchen Display booted successfully"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+# Enable safe mode - allows OTA recovery even if main firmware crashes
+safe_mode:
+
+logger:
+  level: INFO
+  # Reduce UART log noise - frees CPU cycles
+  baud_rate: 0
+
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+  # Reboot if API disconnected for 15 min
+  reboot_timeout: 15min
+  services:
+    - service: reset_filter_counter
+      then:
+        - globals.set:
+            id: filter_days_stored
+            value: '0'
+        - logger.log: "Filter counter reset to zero"
+
+    - service: reset_salt_counter
+      then:
+        - globals.set:
+            id: salt_days_stored
+            value: '0'
+        - logger.log: "Salt counter reset to zero"
+
+    - service: reset_all_counters
+      then:
+        - globals.set:
+            id: filter_days_stored
+            value: '0'
+        - globals.set:
+            id: salt_days_stored
+            value: '0'
+        - logger.log: "All counters reset to zero"
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+wifi:
+  networks:
+    - ssid: "YOUR_WIFI_SSID"
+      password: "YOUR_WIFI_PASSWORD"
+      bssid: "YOUR_AP_BSSID"
+  power_save_mode: none
+  fast_connect: true
+  output_power: 20dBm
+  # Static IP eliminates DHCP delays and failures
+  manual_ip:
+    static_ip: YOUR_DEVICE_IP
+    gateway: YOUR_DEVICE_IP
+    subnet: 255.255.255.0
+    dns1: YOUR_DEVICE_IP
+  # Reboot if WiFi drops for 5 minutes
+  reboot_timeout: 5min
+  ap:
+    ssid: "Smart-Display Fallback"
+    password: "YOUR_AP_PASSWORD"
+
+captive_portal:
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: false
+  frequency: 100kHz
+  id: bus_a
+  sda_pullup_enabled: true
+  scl_pullup_enabled: true
+
+# Time component for day counter persistence
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    # Graceful timezone handling
+    timezone: Europe/Berlin
+    on_time:
+      # Increment filter days at midnight
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              if (id(filter_days_stored) > 0) {
+                id(filter_days_stored) += 1;
+                ESP_LOGI("counter", "Filter days incremented to %d", id(filter_days_stored));
+              }
+              if (id(salt_days_stored) > 0) {
+                id(salt_days_stored) += 1;
+                ESP_LOGI("counter", "Salt days incremented to %d", id(salt_days_stored));
+              }
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "BME280 Temperature"
+      id: bme_temp
+      oversampling: 16x
+      filters:
+        # Smooth out noise spikes
+        - sliding_window_moving_average:
+            window_size: 3
+            send_every: 1
+        # Reject clearly invalid readings
+        - clamp:
+            min_value: -10.0
+            max_value: 60.0
+    humidity:
+      name: "BME280 Humidity"
+      id: bme_humidity
+      oversampling: 8x
+      filters:
+        - sliding_window_moving_average:
+            window_size: 3
+            send_every: 1
+        - clamp:
+            min_value: 0.0
+            max_value: 100.0
+    pressure:
+      name: "BME280 Pressure"
+      id: bme_pressure
+      internal: true
+      oversampling: 8x
+    address: 0x76
+    iir_filter: 4x
+    update_interval: 30s
+
+  # Water Filter Days - reads from stored value
+  - platform: template
+    name: "Water Filter Days"
+    id: water_filter_days
+    unit_of_measurement: "days"
+    accuracy_decimals: 0
+    icon: "mdi:water-sync"
+    lambda: |-
+      return id(filter_days_stored);
+    update_interval: 60s
+
+  # Dishwasher Salt Days - reads from stored value
+  - platform: template
+    name: "Dishwasher Salt Days"
+    id: salt_reminder_days
+    unit_of_measurement: "days"
+    accuracy_decimals: 0
+    icon: "mdi:shaker-outline"
+    lambda: |-
+      return id(salt_days_stored);
+    update_interval: 60s
+
+  - platform: template
+    name: "High Power Timer"
+    id: high_power_timer
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    lambda: |-
+      unsigned long start = id(power_timer_start);
+      if (start > 0) {
+        unsigned long now = millis();
+        // Handle millis() rollover (~49 days)
+        unsigned long elapsed;
+        if (now >= start) {
+          elapsed = now - start;
+        } else {
+          elapsed = (0xFFFFFFFF - start) + now + 1;
+        }
+        return elapsed / 60000.0;
+      }
+      return 0;
+    update_interval: 30s
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return x >= 5.0;'
+            then:
+              - homeassistant.service:
+                  service: media_player.play_media
+                  data:
+                    entity_id: media_player.YOUR_ECHO_DOT
+                    media_content_type: sound
+                    media_content_id: amzn_sfx_doorbell_chime_01
+
+  - platform: homeassistant
+    name: "Smart Plug Power"
+    id: smart_plug_power
+    entity_id: sensor.smart_plug_8_power
+    # Prevent stale values if HA disconnects
+    filters:
+      - timeout:
+          timeout: 120s
+          value: 0
+    on_value:
+      then:
+        - lambda: |-
+            // Only act on valid readings
+            if (std::isnan(x)) return;
+            if (x >= 1200 && id(power_timer_start) == 0) {
+              id(power_timer_start) = millis();
+              ESP_LOGI("power", "High power detected: %.0fW - timer started", x);
+            } else if (x < 400) {
+              if (id(power_timer_start) != 0) {
+                ESP_LOGI("power", "Power dropped below 400W - timer cleared");
+              }
+              id(power_timer_start) = 0;
+            }
+
+  - platform: ld2410
+    moving_distance:
+      name: "Moving Distance"
+      id: moving_distance
+      internal: true
+    still_distance:
+      name: "Still Distance"
+      id: still_distance
+      internal: true
+    moving_energy:
+      name: "Moving Energy"
+      id: moving_energy
+      internal: true
+    still_energy:
+      name: "Still Energy"
+      id: still_energy
+      internal: true
+    detection_distance:
+      name: "Detection Distance"
+      id: detection_distance
+      internal: true
+
+  # Uptime sensor for diagnostics
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor
+    update_interval: 60s
+    internal: true
+
+  # WiFi signal for diagnostics
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+    internal: true
+
+uart:
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 256000
+  parity: NONE
+  stop_bits: 1
+
+ld2410:
+
+binary_sensor:
+  - platform: ld2410
+    has_target:
+      name: "Presence"
+      id: presence_detected
+    has_moving_target:
+      name: "Moving Target"
+      id: moving_target
+      internal: true
+    has_still_target:
+      name: "Still Target"
+      id: still_target
+      internal: true
+
+  - platform: gpio
+    id: physical_filter_button
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    internal: true
+    on_press:
+      - lambda: |-
+          id(filter_days_stored) = 1;
+          ESP_LOGI("button", "Filter button pressed - counter started at Day 1");
+    filters:
+      - delayed_on: 5ms
+      - delayed_off: 50ms
+
+  - platform: gpio
+    id: physical_salt_button
+    pin:
+      number: GPIO1
+      mode: INPUT_PULLUP
+      inverted: true
+    internal: true
+    on_press:
+      - lambda: |-
+          id(salt_days_stored) = 1;
+          ESP_LOGI("button", "Salt button pressed - counter started at Day 1");
+    filters:
+      - delayed_on: 5ms
+      - delayed_off: 50ms
+
+  - platform: gpio
+    name: "Button K3"
+    id: button_k3
+    pin:
+      number: GPIO3
+      mode: INPUT_PULLUP
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 10ms
+      - delayed_off: 100ms
+
+  - platform: gpio
+    name: "Button K4"
+    id: button_k4
+    pin:
+      number: GPIO10
+      mode: INPUT_PULLUP
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 10ms
+      - delayed_off: 100ms
+
+  - platform: status
+    name: "Status"
+    id: wifi_connected
+    internal: true
+
+button:
+  - platform: template
+    name: "Reset Water Filter"
+    id: reset_filter_button
+    icon: "mdi:water-sync"
+    on_press:
+      then:
+        - globals.set:
+            id: filter_days_stored
+            value: '1'
+        - logger.log: "Water filter reset via HA - started at Day 1"
+
+  - platform: template
+    name: "Reset Salt Reminder"
+    id: reset_salt_button
+    icon: "mdi:shaker-outline"
+    on_press:
+      then:
+        - globals.set:
+            id: salt_days_stored
+            value: '1'
+        - logger.log: "Salt reminder reset via HA - started at Day 1"
+
+  - platform: restart
+    name: "Restart Kitchen Display"
+    id: restart_button
+
+globals:
+  - id: filter_days_stored
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  - id: salt_days_stored
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  - id: power_timer_start
+    type: unsigned long
+    restore_value: no
+    initial_value: '0'
+
+font:
+  - file: "gfonts://Roboto@700"
+    id: font_title
+    size: 23
+  - file: "gfonts://Roboto@700"
+    id: font_large
+    size: 12
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 11
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 9
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    update_interval: 1s
+    lambda: |-
+      // Clear display first
+      it.fill(COLOR_OFF);
+
+      // Title Bar - Kitchen on left, Time on right
+      it.print(6, 0, id(font_large), TextAlign::TOP_LEFT, "KITCHEN");
+
+      // Time in 12-hour format without AM/PM (right side)
+      auto time = id(homeassistant_time).now();
+      if (time.is_valid()) {
+        it.strftime(126, 1, id(font_title), TextAlign::TOP_RIGHT, "%I:%M", time);
+      }
+
+      it.line(0, 14, 64, 14);
+
+      // ============ LEFT COLUMN ============
+      // Temperature - with NaN protection
+      if (!std::isnan(id(bme_temp).state)) {
+        it.printf(0, 17, id(font_medium), "Temp: %.1fÂ°C", id(bme_temp).state);
+      } else {
+        it.print(0, 17, id(font_medium), "Temp: --.-Â°C");
+      }
+
+      // Filter Days - simplified without CHANGE warning
+      float filter_days = id(water_filter_days).state;
+      if (!std::isnan(filter_days) && filter_days > 0) {
+        it.printf(0, 30, id(font_medium), "Filter: %.0f/45", filter_days);
+      } else {
+        it.print(0, 30, id(font_medium), "Filter:");
+      }
+
+      // ============ RIGHT COLUMN ============
+      // Humidity - with NaN protection
+      if (!std::isnan(id(bme_humidity).state)) {
+        it.printf(69, 28, id(font_medium), "Hum: %.0f%%", id(bme_humidity).state);
+      } else {
+        it.print(69, 28, id(font_medium), "Hum: --%");
+      }
+
+      // Salt Days - simplified without ADD NOW warning
+      float salt_days = id(salt_reminder_days).state;
+      if (!std::isnan(salt_days) && salt_days > 0) {
+        it.printf(69, 40, id(font_medium), "Salt: %.0f/20", salt_days);
+      } else {
+        it.print(69, 40, id(font_medium), "Salt:");
+      }
+
+      // ============ BOTTOM STATUS ROW ============
+      // Power Monitor with labels - NaN protected
+      float power = id(smart_plug_power).state;
+      if (std::isnan(power)) power = 0;
+      if (power >= 1200) {
+        float timer_min = id(high_power_timer).state;
+        if (std::isnan(timer_min)) timer_min = 0;
+        it.printf(0, 45, id(font_small), "RePow: %.0fW %.0fm", power, timer_min);
+      } else if (power >= 400) {
+        it.printf(0, 42, id(font_small), "RePow: %.0fW", power);
+      } else {
+        it.printf(0, 42, id(font_small), "RePow: %.0fW", power);
+      }
+
+      // Presence with distance
+      if (id(presence_detected).state) {
+        float distance = id(detection_distance).state;
+        if (!std::isnan(distance)) {
+          it.printf(0, 53, id(font_small), "PRES: Yes (%.0fcm)", distance);
+        } else {
+          it.print(0, 53, id(font_small), "PRES: Yes");
+        }
+      } else {
+        it.print(0, 53, id(font_small), "PRES: No");
+      }
+
+      // WiFi indicator
+      if (id(wifi_connected).state) {
+        it.print(102, 53, id(font_small), "WiFi");
+      }

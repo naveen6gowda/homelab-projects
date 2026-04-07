@@ -1,0 +1,200 @@
+esphome:
+  name: hall-clock
+  friendly_name: Hall Clock
+  platformio_options:
+    board_build.flash_mode: dio
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: DEBUG
+  baud_rate: 115200
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+wifi:
+  ssid: YOUR_WIFI_SSID
+  password: YOUR_WIFI_PASSWORD
+  power_save_mode: NONE
+  fast_connect: true
+  
+  # KEEP THIS - It fixed your connection!
+  output_power: 8.5dBm
+  reboot_timeout: 15min  # reboot if no wifi for 15 min
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Hall-Clock Fallback Hotspot"
+    password: "YOUR_AP_PASSWORD"
+
+captive_portal:
+    
+# Time component - HA primary, NTP fallback for reliability
+time:
+  - platform: homeassistant
+    id: esptime
+    timezone: Europe/Berlin
+    on_time_sync:
+      - logger.log: "Time synced from Home Assistant"
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    servers:
+      - "0.pool.ntp.org"
+      - "1.pool.ntp.org"
+    on_time_sync:
+      - logger.log: "Time synced from NTP"
+
+# UART for LD2410C sensor
+uart:
+  tx_pin: GPIO21
+  rx_pin: GPIO20
+  baud_rate: 256000  # CHANGED from 256000
+  parity: NONE
+  stop_bits: 1
+
+# LD2410C Sensor
+ld2410:
+
+# SPI Bus Configuration for Display
+spi:
+  clk_pin: GPIO6
+  mosi_pin: GPIO7
+  
+# Display Configuration - ST7789V
+display:
+  - platform: ili9xxx
+    model: ST7789V
+    cs_pin: GPIO10
+    dc_pin: GPIO4
+    reset_pin: GPIO3
+    invert_colors: true
+    rotation: 270
+    dimensions:
+      width: 240
+      height: 320
+    data_rate: 40MHz
+    color_palette: 8BIT
+    lambda: |-
+      // Get current time - prefer HA, fall back to NTP
+      auto time = id(esptime).now();
+      if (!time.is_valid()) time = id(sntp_time).now();
+      
+      // Clear screen with black background
+      it.fill(COLOR_BLACK);
+      
+      // Display large time in center (yellow color) - 12-hour format
+      if (time.is_valid()) {
+        it.strftime(160, 100, id(time_font), COLOR_YELLOW, TextAlign::CENTER, "%I:%M", time);
+        it.strftime(250, 170, id(ampm_font), COLOR_YELLOW, TextAlign::CENTER, "%p", time);
+        it.strftime(160, 210, id(date_font), COLOR_YELLOW, TextAlign::CENTER, "%d.%m.%Y", time);
+      } else {
+        it.print(160, 120, id(time_font), COLOR_RED, TextAlign::CENTER, "--:--");
+      }
+      
+      // Display sensor data in top-right corner (small yellow text)
+      if (id(presence).state) {
+        it.print(190, 8, id(sensor_font), COLOR_YELLOW, TextAlign::TOP_RIGHT, "PRESENT");
+        
+        // Display distance if available
+        if (id(target_distance).has_state()) {
+          it.printf(240, 8, id(sensor_font), COLOR_YELLOW, TextAlign::TOP_RIGHT, "%.0fcm", id(target_distance).state);
+        }
+      } else {
+        it.print(310, 8, id(sensor_font), COLOR_YELLOW, TextAlign::TOP_RIGHT, "CLEAR");
+      }
+      
+      // Display moving/stationary status
+      if (id(moving_target).state) {
+        it.print(310, 8, id(sensor_font), COLOR_RED, TextAlign::TOP_RIGHT, "MOVING");
+      } else if (id(still_target).state) {
+        it.print(310, 8, id(sensor_font), COLOR_GREEN, TextAlign::TOP_RIGHT, "STILL");
+      }
+
+# Fonts
+font:
+  - file: "gfonts://Roboto"
+    id: time_font
+    size: 130
+    glyphs: "0YOUR_AP_PASSWORD9:-"
+    
+  - file: "gfonts://Roboto"
+    id: ampm_font
+    size: 30
+    glyphs: "AMP"
+    
+  - file: "gfonts://Roboto"
+    id: date_font
+    size: 35
+    glyphs: "0YOUR_AP_PASSWORD9.-/"
+    
+  - file: "gfonts://Roboto"
+    id: sensor_font
+    size: 16
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0YOUR_AP_PASSWORD9:. cm"
+
+# Color definitions
+color:
+  - id: COLOR_BLACK
+    red: 0%
+    green: 0%
+    blue: 0%
+  - id: COLOR_YELLOW
+    red: 100%
+    green: 100%
+    blue: 0%
+  - id: COLOR_RED
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: COLOR_GREEN
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: COLOR_CYAN
+    red: 0%
+    green: 100%
+    blue: 100%
+
+# Binary Sensors from LD2410C
+binary_sensor:
+  - platform: ld2410
+    has_target:
+      name: "Presence"
+      id: presence
+    has_moving_target:
+      name: "Moving Target"
+      id: moving_target
+    has_still_target:
+      name: "Still Target"
+      id: still_target
+
+# Sensors from LD2410C
+sensor:
+  - platform: ld2410
+    moving_distance:
+      name: "Moving Distance"
+    still_distance:
+      name: "Still Distance"
+    moving_energy:
+      name: "Moving Energy"
+    still_energy:
+      name: "Still Energy"
+    detection_distance:
+      name: "Detection Distance"
+      id: target_distance
+    light:
+      name: "Light"
+
+

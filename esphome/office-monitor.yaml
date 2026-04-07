@@ -1,0 +1,218 @@
+esphome:
+  name: office-monitor
+  friendly_name: Office Monitor
+  on_boot:
+    priority: 800
+    then:
+      - delay: 10s
+      - logger.log: "Office Monitor - C3 SuperMini Mode"
+
+esp32:
+  board: esp32-c3-devkitm-1  # ESP32-C3 SuperMini compatible
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+  baud_rate: 115200
+  hardware_uart: UART0  # C3 uses UART0 for logging
+
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+wifi:
+  ssid: YOUR_WIFI_SSID
+  password: YOUR_WIFI_PASSWORD
+  power_save_mode: NONE
+  fast_connect: true
+  reboot_timeout: 15min  # reboot if no wifi for 15 min
+  ap:
+    ssid: "Officeroom-Monitor"
+    password: "YOUR_AP_PASSWORD9"
+
+captive_portal:
+
+# Time component - HA primary, NTP fallback for reliability
+time:
+  - platform: homeassistant
+    id: esptime
+    timezone: Europe/Berlin
+    on_time_sync:
+      - logger.log: "Time synced from Home Assistant"
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    servers:
+      - "0.pool.ntp.org"
+      - "1.pool.ntp.org"
+    on_time_sync:
+      - logger.log: "Time synced from NTP"
+
+# I2C Bus - All sensors on single bus
+i2c:
+  - id: bus_display
+    sda: GPIO8   # C3 I2C SDA
+    scl: GPIO9   # C3 I2C SCL
+    scan: true
+    frequency: 50kHz  # Lower frequency for stability
+
+# UART for LD2410C - Using UART1
+uart:
+  - id: uart_bus
+    tx_pin: GPIO21  # C3 UART1 TX
+    rx_pin: GPIO20  # C3 UART1 RX
+    baud_rate: 256000
+    parity: NONE
+
+binary_sensor:
+  - platform: status
+    name: "System Status"
+    id: system_status
+
+  # LD2410C Binary Sensors
+  - platform: ld2410
+    has_target:
+      name: "Presence"
+      id: has_presence
+    has_moving_target:
+      name: "Moving Target"
+      id: motion_detected
+    has_still_target:
+      name: "Still Target"
+      id: still_detected
+
+ld2410:
+  uart_id: uart_bus
+
+sensor:
+  # AHT20 temperature + humidity
+  - platform: aht10
+    i2c_id: bus_display
+    variant: AHT20
+    temperature:
+      name: "Room Temperature"
+      id: temp_sensor
+    humidity:
+      name: "Room Humidity"
+      id: hum_sensor
+    address: 0x38
+    update_interval: 60s
+
+  # ENS160 air quality (may not work - hardware defect)
+  - platform: ens160_i2c
+    i2c_id: bus_display
+    address: 0x53
+    eco2:
+      name: "Room CO2"
+      id: co2_sensor
+    tvoc:
+      name: "Room TVOC"
+      id: tvoc_sensor
+    aqi:
+      name: "Room AQI"
+      id: aqi_sensor
+    compensation:
+      temperature: temp_sensor
+      humidity: hum_sensor
+    update_interval: 60s
+    
+
+  # LD2410C Sensors
+  - platform: ld2410
+    moving_distance:
+      name: "Motion Distance"
+      id: motion_distance
+    still_distance:
+      name: "Still Distance"
+      id: still_distance
+    moving_energy:
+      name: "Moving Energy"
+      id: moving_energy
+    still_energy:
+      name: "Still Energy"
+      id: still_energy
+    detection_distance:
+      name: "Detection Distance"
+      id: detection_distance
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_strength
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sec
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: ip_addr
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 10
+  - file: "gfonts://Roboto@700"
+    id: font_medium
+    size: 14
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 8
+  - file: "gfonts://Roboto"
+    id: time_font
+    size: 27
+    glyphs: "0YOUR_AP_PASSWORD9:- "
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    rotation: 0
+    update_interval: 1s    # 1s for accurate clock ticking
+    contrast: 100%          # maximum brightness
+    i2c_id: bus_display
+    lambda: |-
+      it.printf(64, 0, id(font_medium), TextAlign::TOP_CENTER, "Office Monitor");
+      it.printf(0, 16, id(font_small), "Temp: %.1f C", id(temp_sensor).has_state() ? id(temp_sensor).state : 0.0);
+      it.printf(0, 28, id(font_small), "Hum: %.0f%%", id(hum_sensor).has_state() ? id(hum_sensor).state : 0.0);
+      it.printf(0, 40, id(font_small), "CO2: %.0f ppm", id(co2_sensor).has_state() ? id(co2_sensor).state : 0.0);
+
+      // Clock: prefer HA time, fall back to NTP if HA disconnected
+      auto t = id(esptime).now();
+      if (!t.is_valid()) t = id(sntp_time).now();
+      if (t.is_valid()) {
+        it.strftime(92, 37, id(time_font), TextAlign::CENTER, "%I:%M", t);
+      } else {
+        it.print(92, 37, id(time_font), TextAlign::CENTER, "--:--");
+      }
+      
+      if (id(motion_detected).state) {
+        if (id(motion_distance).has_state() && id(motion_distance).state > 0) {
+          it.printf(0, 52, id(font_small), "PRES: Yes (%.0fcm)", id(motion_distance).state);
+        } else {
+          it.printf(0, 52, id(font_small), "PRES: Yes");
+        }
+      } else if (id(still_detected).state) {
+        if (id(still_distance).has_state() && id(still_distance).state > 0) {
+          it.printf(0, 52, id(font_small), "PRES: Yes (%.0fcm)", id(still_distance).state);
+        } else {
+          it.printf(0, 52, id(font_small), "PRES: Yes");
+        }
+      } else {
+        it.printf(0, 52, id(font_small), "PRES: No");
+      }
+      
+      if (id(uptime_sec).has_state()) {
+        uint32_t uptime_hr = (uint32_t)(id(uptime_sec).state / 3600.0f);
+        it.printf(107, 52, id(font_tiny), "%luhr", uptime_hr);
+      }
+
+

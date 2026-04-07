@@ -1,0 +1,327 @@
+esphome:
+  name: livingroom-monitor
+  friendly_name: LivingRoom Monitor
+  # Graceful recovery on boot failures
+  on_boot:
+    priority: 200
+    then:
+      - logger.log: "Boot complete"
+
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  framework:
+    type: arduino
+
+
+logger:
+  level: NONE
+  baud_rate: 0
+
+
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+  reboot_timeout: 15min  # Reboot if HA disconnects for 15min (default 15min, explicit)
+
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+
+wifi:
+  ssid: YOUR_WIFI_SSID
+  password: YOUR_WIFI_PASSWORD
+  power_save_mode: NONE
+  fast_connect: true
+  output_power: 8.5dB
+  reboot_timeout: 10min  # Reboot if WiFi lost for 10min
+  manual_ip:
+    static_ip: YOUR_DEVICE_IP
+    gateway: YOUR_DEVICE_IP
+    subnet: 255.255.255.0
+    dns1: YOUR_DEVICE_IP
+  ap:
+    ssid: "Livingroom-Monitor"
+    password: "YOUR_AP_PASSWORD"
+
+
+captive_portal:
+
+
+# Watchdog: auto-restart on freeze
+interval:
+  - interval: 300s
+    then:
+      - if:
+          condition:
+            not:
+              wifi.connected:
+          then:
+            - logger.log:
+                level: WARN
+                format: "WiFi disconnected - watchdog monitoring"
+
+
+i2c:
+  sda:
+    number: GPIO4
+  scl:
+    number: GPIO5
+  scan: false
+  id: bus_a
+  frequency: 50kHz
+
+
+binary_sensor:
+  - platform: status
+    name: "System Status"
+    id: system_status
+
+
+button:
+  # Expose a restart button to HA for remote recovery
+  - platform: restart
+    name: "Restart"
+    id: restart_button
+
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org
+
+
+sensor:
+  - platform: bme280_i2c
+    temperature:
+      name: "BME280 Temperature"
+      id: bme_temp
+      oversampling: 2x
+      filters:
+        - sliding_window_moving_average:
+            window_size: 5
+            send_every: 3
+        # Guard against sensor glitches
+        - clamp:
+            min_value: -20.0
+            max_value: 60.0
+        - delta: 0.2  # Only send on meaningful change
+    pressure:
+      name: "BME280 Pressure"
+      id: bme_press
+      oversampling: 2x
+      filters:
+        - sliding_window_moving_average:
+            window_size: 5
+            send_every: 3
+        - clamp:
+            min_value: 800.0
+            max_value: 1200.0
+        - delta: 0.5
+    humidity:
+      name: "BME280 Humidity"
+      id: bme_hum
+      oversampling: 2x
+      filters:
+        - sliding_window_moving_average:
+            window_size: 5
+            send_every: 3
+        - clamp:
+            min_value: 0.0
+            max_value: 100.0
+        - delta: 0.5
+    address: 0x76
+    update_interval: 60s
+    i2c_id: bus_a
+
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_strength
+    update_interval: 300s
+    filters:
+      - delta: 2.0
+
+
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sec
+    update_interval: 300s
+
+
+  - platform: adc
+    pin: GPIO3
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 60s
+    attenuation: 12dB
+    filters:
+      - multiply: 2.0
+
+  - platform: homeassistant
+    name: "Outside Temperature"
+    id: outside_temp
+    entity_id: weather.home
+    attribute: temperature
+
+  - platform: homeassistant
+    id: outdoor_humidity
+    entity_id: weather.forecast_home
+    attribute: humidity
+
+  # Internal diagnostic: free heap memory
+  - platform: template
+    name: "Free Heap"
+    id: free_heap
+    lambda: 'return esp_get_free_heap_size();'
+    update_interval: 60s
+    unit_of_measurement: "B"
+    entity_category: diagnostic
+    icon: mdi:memory
+
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: ip_addr
+
+  - platform: homeassistant
+    name: "Weather Condition"
+    id: weather_condition
+    entity_id: weather.home
+
+  # Diagnostic: ESPHome version
+  - platform: version
+    name: "ESPHome Version"
+    entity_category: diagnostic
+
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 10
+  - file: "gfonts://Roboto@700"
+    id: font_medium
+    size: 14
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 8
+  - file: "gfonts://Roboto@700"
+    id: font_large_time
+    size: 25
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: font_mdi_weather
+    size: 18
+    glyphs:
+      - "\U000F0590" # mdi-weather-cloudy
+      - "\U000F0591" # mdi-weather-fog
+      - "\U000F0592" # mdi-weather-hail
+      - "\U000F0593" # mdi-weather-lightning
+      - "\U000F067E" # mdi-weather-lightning-rainy
+      - "\U000F0594" # mdi-weather-night
+      - "\U000F0F31" # mdi-weather-night-partly-cloudy
+      - "\U000F0595" # mdi-weather-partly-cloudy
+      - "\U000F0596" # mdi-weather-pouring
+      - "\U000F0597" # mdi-weather-rainy
+      - "\U000F0598" # mdi-weather-snowy
+      - "\U000F067F" # mdi-weather-snowy-rainy
+      - "\U000F0599" # mdi-weather-sunny
+      - "\U000F059D" # mdi-weather-windy
+
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    rotation: 0
+    contrast: 50%
+    update_interval: 10s
+    i2c_id: bus_a
+    lambda: |-
+      it.printf(64, 0, id(font_medium), TextAlign::TOP_CENTER, "Living TempMonitor");
+
+      // Temperature - label and value on same line with different fonts
+      if (id(bme_temp).has_state()) {
+        it.printf(0, 18, id(font_small), "Temp:");
+        it.printf(28, 16, id(font_medium), "%.1fÂ°C", id(bme_temp).state);
+      } else {
+        it.printf(0, 18, id(font_small), "Temp: --");
+      }
+
+      // Date display next to temperature and above rectangle (DD/MM/YYYY format)
+      if (id(sntp_time).now().is_valid()) {
+        it.strftime(99, 15, id(font_small), TextAlign::TOP_CENTER, "%d.%m  %a", id(sntp_time).now());
+        it.strftime(96, 25, id(font_large_time), TextAlign::TOP_CENTER, "%I:%M", id(sntp_time).now());
+      } else {
+        it.printf(99, 15, id(font_small), TextAlign::TOP_CENTER, "--:--");
+        it.printf(96, 25, id(font_large_time), TextAlign::TOP_CENTER, "--:--");
+      }
+
+      // Humidity - label and value on same line with different fonts
+      if (id(bme_hum).has_state()) {
+        it.printf(0, 35, id(font_small), "Hum:");
+        it.printf(26, 33, id(font_medium), "%.1f%%", id(bme_hum).state);
+      } else {
+        it.printf(0, 35, id(font_small), "Hum: --");
+      }
+
+      // Bottom row: WiFi status, Weather, Outside Temp, Battery Voltage
+      if (id(system_status).state) {
+        it.printf(0, 54, id(font_tiny), "WiFi: OK");
+      } else {
+        it.printf(0, 54, id(font_tiny), "WiFi: --");
+      }
+
+      // Weather condition icon using Material Design Icons
+      if (id(weather_condition).has_state()) {
+        std::string condition = id(weather_condition).state;
+        std::string icon = "";
+
+        if (condition == "sunny" || condition == "clear-night") {
+          icon = "\U000F0599";
+        } else if (condition == "cloudy") {
+          icon = "\U000F0590";
+        } else if (condition == "partlycloudy") {
+          icon = "\U000F0595";
+        } else if (condition == "rainy") {
+          icon = "\U000F0597";
+        } else if (condition == "pouring") {
+          icon = "\U000F0596";
+        } else if (condition == "snowy") {
+          icon = "\U000F0598";
+        } else if (condition == "snowy-rainy") {
+          icon = "\U000F067F";
+        } else if (condition == "fog") {
+          icon = "\U000F0591";
+        } else if (condition == "windy") {
+          icon = "\U000F059D";
+        } else if (condition == "lightning") {
+          icon = "\U000F0593";
+        } else if (condition == "lightning-rainy") {
+          icon = "\U000F067E";
+        } else if (condition == "hail") {
+          icon = "\U000F0592";
+        }
+
+        if (icon != "") {
+          it.printf(41, 48, id(font_mdi_weather), TextAlign::TOP_LEFT, "%s", icon.c_str());
+        }
+      }
+
+      // Outside temperature
+      if (id(outside_temp).has_state()) {
+        it.printf(69, 52, id(font_small), "%.1fÂ°C", id(outside_temp).state);
+      }
+
+      // outdoor_humidity
+      if (id(outdoor_humidity).has_state()) {
+        it.printf(105, 52, id(font_small), "%.0f%%", id(outdoor_humidity).state);
+      }

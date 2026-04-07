@@ -1,0 +1,789 @@
+####################################################################
+#  MAILBOX ALERT v16 -- ESP32-C6 SuperMini (Tenstar)
+#  -----------------------------------------------------------------
+#  v16 fixes: crash-recovery timer-only sleep (no ext1), WiFi-fail
+#  path now uses timer-only sleep when GPIO4 was HIGH at boot.
+#
+#  ARCHITECTURE: MQTT transport (fire-and-forget)
+#  DEEP SLEEP:   ext1 wakeup on GPIO4 (ANY_HIGH) + 60min timer
+#  CRASH GUARD:  Priority 800 -- sleeps BEFORE WiFi starts
+#
+#  WIRING:
+#    GPIO4 -- MC-38 reed (NC) -- GND
+#    GPIO4 -- 10K resistor   -- 3.3V  (external pull-up)
+#    GPIO2 -- 470k/470k divider -- Battery+
+#    GPIO6 -- I2C SDA (AHT21)
+#    GPIO7 -- I2C SCL (AHT21)
+#
+#    Lid CLOSED: reed closed -> GPIO4 = LOW
+#    Lid OPEN:   reed open  -> GPIO4 = HIGH
+#  -----------------------------------------------------------------
+####################################################################
+
+substitutions:
+  device_name: mailbox-alert
+  friendly_name: Mailbox Alert
+  # -- WiFi --
+  wifi_ssid: "YOUR_WIFI_SSID"
+  wifi_password: "YOUR_WIFI_PASSWORD"
+  #wifi_bssid: "YOUR_AP_BSSID"
+  static_ip: "YOUR_DEVICE_IP"
+  gateway: "YOUR_DEVICE_IP"
+  subnet: "255.255.255.0"
+  dns1: "YOUR_DEVICE_IP"
+  # -- MQTT --
+  mqtt_broker: "YOUR_HA_IP"
+  mqtt_port: "1883"
+  mqtt_user: "navi18mqtt"
+  mqtt_password: "YOUR_MQTT_PASSWORD"
+  # -- Timing --
+  sleep_minutes: "60"
+  grace_ms: "3000"
+  ota_window_s: "30"
+  ota_stay_s: "300"
+  # -- Crash protection --
+  max_crashes: "3"
+  emergency_sleep_h: "2"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    ##########################################################
+    #  PRIORITY 800: Crash recovery BEFORE WiFi starts.
+    #  Brownout/WDT/Panic -> immediate deep sleep (~2ms).
+    ##########################################################
+    - priority: 800
+      then:
+        - lambda: |-
+            auto rst = esp_reset_reason();
+            if (rst == ESP_RST_BROWNOUT || rst == ESP_RST_WDT || rst == ESP_RST_PANIC) {
+              id(consecutive_crashes) += 1;
+              int crashes = id(consecutive_crashes);
+
+              const char* reason = "unknown";
+              if (rst == ESP_RST_BROWNOUT) reason = "brownout";
+              else if (rst == ESP_RST_WDT) reason = "watchdog";
+              else if (rst == ESP_RST_PANIC) reason = "panic";
+
+              uint64_t sleep_us;
+              if (crashes >= ${max_crashes}) {
+                sleep_us = ${emergency_sleep_h}ULL * 3600ULL * 1000000ULL;
+                ESP_LOGE("crash", "BOOT LOOP (%s #%d) -- emergency sleep %dh",
+                         reason, crashes, ${emergency_sleep_h});
+              } else {
+                sleep_us = 3600ULL * 1000000ULL;
+                ESP_LOGW("crash", "Crash recovery (%s #%d) -- sleep 60min",
+                         reason, crashes);
+              }
+
+              // Sleep immediately -- no WiFi, no MQTT
+              // TIMER-ONLY: ext1 intentionally disabled here.
+              // If GPIO4 is stuck HIGH (reed open / bad contact), enabling
+              // ext1 in crash recovery causes an immediate re-wake -> boot loop.
+              esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+              esp_sleep_enable_timer_wakeup(sleep_us);
+              esp_deep_sleep_start();
+            }
+
+    ##########################################################
+    #  PRIORITY 600: Read GPIO4 + classify wake cause
+    ##########################################################
+    - priority: 600
+      then:
+        - lambda: |-
+            // Configure GPIO4 as input (external 10K pull-up does the work)
+            gpio_config_t io = {};
+            io.intr_type = GPIO_INTR_DISABLE;
+            io.mode = GPIO_MODE_INPUT;
+            io.pin_bit_mask = (1ULL << 4);
+            io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+            io.pull_up_en = GPIO_PULLUP_DISABLE;  // external pull-up only
+            gpio_config(&io);
+            vTaskDelay(pdMS_TO_TICKS(10));
+
+            id(wake_time_ms) = (uint32_t)millis();
+            bool pin_high = (gpio_get_level(GPIO_NUM_4) == 1);
+            id(pin_was_high_at_boot) = pin_high;
+
+            auto rst = esp_reset_reason();
+            id(wake_cause_raw) = (int)rst;
+
+            ESP_LOGW("boot", "===== MAILBOX v15 =====");
+            ESP_LOGW("boot", "reset=%d gpio4=%d lid_stuck=%d crashes=%d",
+                     (int)rst, pin_high ? 1 : 0,
+                     id(lid_stuck_open) ? 1 : 0,
+                     id(consecutive_crashes));
+
+            if (rst == ESP_RST_DEEPSLEEP) {
+              // Successful sleep -> reset crash counter
+              id(consecutive_crashes) = 0;
+
+              auto cause = esp_sleep_get_wakeup_cause();
+              bool gpio_wake = (cause == ESP_SLEEP_WAKEUP_EXT1 ||
+                                cause == ESP_SLEEP_WAKEUP_GPIO);
+              bool timer_wake = (cause == ESP_SLEEP_WAKEUP_TIMER);
+
+              if (gpio_wake && !id(lid_stuck_open)) {
+                id(is_mail_event) = true;
+                id(mail_count) += 1;
+                id(wake_reason_text) = "Mail Delivery";
+                ESP_LOGW("boot", ">>> MAIL! Count: %d", id(mail_count));
+
+              } else if (gpio_wake && id(lid_stuck_open)) {
+                id(is_lid_stuck_wake) = true;
+                id(wake_reason_text) = "Lid Still Open";
+                ESP_LOGW("boot", ">>> Lid stuck -- suppressing");
+
+              } else if (timer_wake) {
+                id(is_timer_event) = true;
+                if (id(lid_stuck_open)) {
+                  if (!pin_high) {
+                    id(lid_stuck_open) = false;
+                    id(wake_reason_text) = "Lid Closed (Resumed)";
+                    ESP_LOGW("boot", ">>> Lid CLOSED on timer!");
+                  } else {
+                    id(wake_reason_text) = "Lid Still Open (Timer)";
+                    ESP_LOGW("boot", ">>> Lid still open on timer");
+                  }
+                } else {
+                  id(wake_reason_text) = "Timer Check-In";
+                  ESP_LOGW("boot", ">>> Timer check-in");
+                }
+
+              } else if (pin_high && !id(lid_stuck_open)) {
+                // Fallback: pin is HIGH but cause was unexpected
+                id(is_mail_event) = true;
+                id(mail_count) += 1;
+                id(wake_reason_text) = "Mail (pin fallback)";
+                ESP_LOGW("boot", ">>> MAIL fallback (cause=%d) Count: %d",
+                         (int)cause, id(mail_count));
+
+              } else {
+                id(is_timer_event) = true;
+                id(wake_reason_text) = "Unknown Wake";
+                ESP_LOGW("boot", ">>> Unknown cause=%d -> timer path", (int)cause);
+              }
+
+            } else {
+              // Clean boot: power-on or OTA software reset
+              id(consecutive_crashes) = 0;
+              id(lid_stuck_open) = false;
+              id(is_first_boot) = true;
+              id(wake_reason_text) = (rst == ESP_RST_SW) ? "OTA Boot" : "Power On";
+              ESP_LOGW("boot", ">>> CLEAN BOOT (reason=%d)", (int)rst);
+            }
+
+    ##########################################################
+    #  PRIORITY -100: Main logic (WiFi/MQTT ready)
+    ##########################################################
+    - priority: -100
+      then:
+        - deep_sleep.prevent: deep_sleep_ctrl
+
+        # Turn off onboard LEDs
+        - lambda: |-
+            gpio_set_direction(GPIO_NUM_8, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_NUM_8, 0);
+            gpio_set_direction(GPIO_NUM_15, GPIO_MODE_OUTPUT);
+            gpio_set_level(GPIO_NUM_15, 0);
+
+
+        # --- WiFi timeout escape: if no connection in 30s, sleep and retry ---
+        - wait_until:
+            condition:
+              wifi.connected:
+            timeout: 30s
+        - if:
+            condition:
+              not:
+                wifi.connected:
+            then:
+              - logger.log:
+                  level: ERROR
+                  format: "WiFi failed -- sleeping, retry in 60min"
+              - if:
+                  condition:
+                    lambda: 'return id(pin_was_high_at_boot);'
+                  then:
+                    # GPIO4 was HIGH at boot -- use timer-only sleep to avoid
+                    # immediate ext1 re-wake if reed switch is still open
+                    - script.execute: sleep_timer_only
+                  else:
+                    - script.execute: go_to_sleep
+
+        # --- LID STUCK WAKE: back to sleep immediately ---
+        - if:
+            condition:
+              lambda: 'return id(is_lid_stuck_wake);'
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Lid stuck -- timer-only sleep"
+              - script.execute: sleep_timer_only
+
+        # --- FIRST BOOT: OTA window then sleep ---
+        - if:
+            condition:
+              lambda: 'return id(is_first_boot);'
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "First boot -- OTA window"
+              - wait_until:
+                  condition:
+                    mqtt.connected:
+                  timeout: 15s
+              - if:
+                  condition:
+                    mqtt.connected:
+                  then:
+                    - mqtt.publish:
+                        topic: "mailbox/ota_mode"
+                        payload: "OFF"
+                        retain: true
+                    - mqtt.publish:
+                        topic: "mailbox/status"
+                        payload: "OTA_READY"
+                        retain: false
+              - lambda: |-
+                  uint32_t elapsed = (uint32_t)millis() - id(wake_time_ms);
+                  uint32_t remaining = (elapsed < (${ota_window_s} * 1000U))
+                    ? ((${ota_window_s} * 1000U) - elapsed) : 0;
+                  id(grace_remaining_ms) = remaining;
+                  ESP_LOGW("boot", "OTA window: %ums elapsed, %ums left",
+                           elapsed, remaining);
+              - delay: !lambda 'return id(grace_remaining_ms);'
+              - script.execute: go_to_sleep
+
+        # --- MAIL EVENT: grace -> lid check -> alert -> sleep ---
+        - if:
+            condition:
+              lambda: 'return id(is_mail_event);'
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Mail event -- connecting..."
+              - wait_until:
+                  condition:
+                    mqtt.connected:
+                  timeout: 10s
+              # Grace period: let mail carrier close the lid
+              - lambda: |-
+                  uint32_t elapsed = (uint32_t)millis() - id(wake_time_ms);
+                  uint32_t remaining = (elapsed < ${grace_ms}U)
+                    ? (${grace_ms}U - elapsed) : 0;
+                  id(grace_remaining_ms) = remaining;
+              - delay: !lambda 'return id(grace_remaining_ms);'
+              # Check lid state after grace
+              - lambda: |-
+                  bool lid_open = (gpio_get_level(GPIO_NUM_4) == 1);
+                  id(lid_open_after_grace) = lid_open;
+                  ESP_LOGW("lid", "After grace: gpio4=%s",
+                           lid_open ? "OPEN" : "CLOSED");
+              - if:
+                  condition:
+                    lambda: 'return !id(lid_open_after_grace);'
+                  then:
+                    # Lid closed -> normal mail alert
+                    - lambda: 'id(lid_stuck_open) = false;'
+                    - if:
+                        condition:
+                          mqtt.connected:
+                        then:
+                          - script.execute: read_sensors
+                          - script.wait: read_sensors
+                          - script.execute: record_delivery_time
+                          - lambda: 'id(event_type) = "mail";'
+                          - script.execute: publish_event
+                          - script.wait: publish_event
+                          - delay: 100ms
+                          - script.execute: check_ota_mode
+                          - script.wait: check_ota_mode
+                        else:
+                          - logger.log:
+                              level: ERROR
+                              format: "MQTT timeout -- mail notification lost!"
+                    - script.execute: go_to_sleep
+                  else:
+                    # Lid still open -> send mail alert + lid_stuck warning
+                    - lambda: |-
+                        id(lid_stuck_open) = true;
+                        id(wake_reason_text) = "Mail+Lid Open";
+                        ESP_LOGW("lid", "LID OPEN -- sending mail + lid_stuck");
+                    - if:
+                        condition:
+                          mqtt.connected:
+                        then:
+                          - script.execute: read_sensors
+                          - script.wait: read_sensors
+                          - script.execute: record_delivery_time
+                          # First: mail delivery event
+                          - lambda: 'id(event_type) = "mail";'
+                          - script.execute: publish_event
+                          - script.wait: publish_event
+                          - delay: 100ms
+                          # Second: lid_stuck warning
+                          - lambda: 'id(event_type) = "lid_stuck";'
+                          - script.execute: publish_event
+                          - script.wait: publish_event
+                          - delay: 100ms
+                    - script.execute: sleep_timer_only
+
+        # --- TIMER EVENT: sensors -> publish -> sleep ---
+        - if:
+            condition:
+              lambda: 'return id(is_timer_event);'
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Timer check-in"
+              - wait_until:
+                  condition:
+                    mqtt.connected:
+                  timeout: 10s
+              - if:
+                  condition:
+                    mqtt.connected:
+                  then:
+                    - script.execute: read_sensors
+                    - script.wait: read_sensors
+                    - lambda: 'id(event_type) = "checkin";'
+                    - script.execute: publish_event
+                    - script.wait: publish_event
+                    - delay: 100ms
+                    - script.execute: check_ota_mode
+                    - script.wait: check_ota_mode
+                  else:
+                    - logger.log:
+                        level: ERROR
+                        format: "MQTT timeout on timer wake"
+              - if:
+                  condition:
+                    lambda: 'return id(lid_stuck_open);'
+                  then:
+                    - script.execute: sleep_timer_only
+                  else:
+                    - script.execute: go_to_sleep
+
+####################################################################
+#  PLATFORM
+####################################################################
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+
+logger:
+  level: WARN
+  baud_rate: 115200
+
+####################################################################
+#  WIFI -- LIGHT power save, 15dBm to prevent brownout
+####################################################################
+wifi:
+  networks:
+    - ssid: ${wifi_ssid}
+      password: ${wifi_password}
+  fast_connect: true
+  reboot_timeout: 0s
+  power_save_mode: LIGHT
+  output_power: 15dBm
+  manual_ip:
+    static_ip: ${static_ip}
+    gateway: ${gateway}
+    subnet: ${subnet}
+    dns1: ${dns1}
+
+####################################################################
+#  MQTT -- fire-and-forget, no availability issues
+####################################################################
+mqtt:
+  broker: ${mqtt_broker}
+  port: ${mqtt_port}
+  username: ${mqtt_user}
+  password: ${mqtt_password}
+  birth_message:
+  will_message:
+  on_message:
+    - topic: mailbox/ota_mode
+      then:
+        - lambda: |-
+            if (x == "ON") {
+              id(ota_requested) = true;
+              ESP_LOGW("ota", "OTA mode requested via MQTT");
+            }
+
+####################################################################
+#  OTA
+####################################################################
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+####################################################################
+#  TIME -- SNTP, conditional sync only when invalid
+####################################################################
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    update_interval: never
+    servers:
+      - YOUR_DEVICE_IP
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+    on_time_sync:
+      then:
+        - lambda: |-
+            auto t = id(sntp_time).now();
+            ESP_LOGW("ntp", "Synced: %02d:%02d %02d.%02d.%04d",
+                     t.hour, t.minute, t.day_of_month, t.month, t.year);
+
+####################################################################
+#  I2C -- 50kHz for battery reliability
+####################################################################
+i2c:
+  sda: GPIO6
+  scl: GPIO7
+  scan: false
+  frequency: 50000
+
+####################################################################
+#  GLOBALS
+####################################################################
+globals:
+  # -- Persistent across deep sleep (NVS) --
+  - id: mail_count
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: lid_stuck_open
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: last_delivery_time
+    type: std::string
+    restore_value: yes
+    initial_value: '"No Mail Yet"'
+  - id: consecutive_crashes
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  # -- Reset each boot --
+  - id: wake_cause_raw
+    type: int
+    initial_value: '0'
+  - id: pin_was_high_at_boot
+    type: bool
+    initial_value: 'false'
+  - id: is_mail_event
+    type: bool
+    initial_value: 'false'
+  - id: is_timer_event
+    type: bool
+    initial_value: 'false'
+  - id: is_first_boot
+    type: bool
+    initial_value: 'false'
+  - id: is_lid_stuck_wake
+    type: bool
+    initial_value: 'false'
+  - id: lid_open_after_grace
+    type: bool
+    initial_value: 'false'
+  - id: ota_requested
+    type: bool
+    initial_value: 'false'
+  - id: wake_reason_text
+    type: std::string
+    initial_value: '"Unknown"'
+  - id: event_type
+    type: std::string
+    initial_value: '"unknown"'
+  - id: battery_pct
+    type: float
+    initial_value: '0.0'
+  - id: battery_days
+    type: float
+    initial_value: '0.0'
+  - id: wake_time_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: grace_remaining_ms
+    type: uint32_t
+    initial_value: '0'
+
+####################################################################
+#  DEEP SLEEP -- ext1 on GPIO4, timer backup
+####################################################################
+deep_sleep:
+  id: deep_sleep_ctrl
+  sleep_duration: ${sleep_minutes}min
+  esp32_ext1_wakeup:
+    pins:
+      - number: GPIO4
+    mode: ANY_HIGH
+
+####################################################################
+#  SENSORS
+####################################################################
+sensor:
+  - platform: aht10
+    id: aht21_sensor
+    variant: AHT20
+    address: 0x38
+    update_interval: never
+    temperature:
+      name: "Mailbox Temp"
+      id: mailbox_temp
+      filters:
+        - round: 1
+    humidity:
+      name: "Mailbox Humidity"
+      id: mailbox_humidity
+      filters:
+        - round: 0
+
+  - platform: template
+    name: "Mail Count"
+    id: mail_delivery_count
+    state_class: total_increasing
+    icon: mdi:mailbox
+    update_interval: never
+    lambda: 'return id(mail_count);'
+
+  - platform: adc
+    pin: GPIO2
+    name: "Mailbox Battery Voltage"
+    id: battery_voltage
+    update_interval: never
+    attenuation: 12db
+    filters:
+      - multiply: 2.0
+      - round: 2
+
+  - platform: template
+    name: "Mailbox Battery %"
+    id: battery_percent_sensor
+    unit_of_measurement: "%"
+    icon: mdi:battery
+    device_class: battery
+    update_interval: never
+    lambda: 'return id(battery_pct);'
+
+  - platform: template
+    name: "Mailbox Battery Days Left"
+    id: battery_days_sensor
+    unit_of_measurement: "days"
+    icon: mdi:battery-clock-outline
+    update_interval: never
+    lambda: 'return id(battery_days);'
+
+text_sensor:
+  - platform: template
+    name: "Mailbox Wakeup Reason"
+    id: wakeup_reason_sensor
+    icon: mdi:alarm
+    update_interval: never
+    lambda: 'return id(wake_reason_text);'
+
+  - platform: template
+    name: "Mailbox Last Delivery"
+    id: last_delivery_sensor
+    icon: mdi:clock-outline
+    update_interval: never
+    lambda: 'return id(last_delivery_time);'
+
+
+####################################################################
+#  SCRIPTS
+####################################################################
+script:
+  # ---- Read all sensors + compute battery metrics ----
+  - id: read_sensors
+    mode: single
+    then:
+      # Trigger NTP sync only if time is invalid
+      - lambda: |-
+          if (!id(sntp_time).now().is_valid()) {
+            id(sntp_time).update();
+            ESP_LOGW("ntp", "Time invalid -- syncing");
+          }
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 8s
+      # Let I2C bus settle after wake before reading
+      - delay: 50ms
+      # Read AHT21 (ESPHome driver handles measurement timing internally)
+      - component.update: aht21_sensor
+      - delay: 200ms
+      # Retry once if AHT21 returned NaN
+      - if:
+          condition:
+            lambda: 'return isnan(id(mailbox_temp).state);'
+          then:
+            - logger.log:
+                level: WARN
+                format: "AHT21 read failed -- retrying"
+            - component.update: aht21_sensor
+            - delay: 300ms
+      # Read battery voltage
+      - component.update: battery_voltage
+      - delay: 50ms
+      # Compute battery % and days remaining
+      - lambda: |-
+          float v = id(battery_voltage).state;
+          float pct = 0.0;
+          float days = 0.0;
+          if (v > 0.0 && !isnan(v)) {
+            pct = (v - 3.0) / (4.2 - 3.0) * 100.0;
+            if (pct > 100.0) pct = 100.0;
+            if (pct < 0.0) pct = 0.0;
+            float usable = pct - 10.0;
+            if (usable < 0.0) usable = 0.0;
+            days = usable / 0.36;
+          }
+          id(battery_pct) = pct;
+          id(battery_days) = days;
+          ESP_LOGW("sensor", "V=%.2f Pct=%.0f%% Days=%.0f", v, pct, days);
+      # Update template sensors so MQTT auto-publishes them
+      - component.update: battery_percent_sensor
+      - component.update: battery_days_sensor
+      - component.update: mail_delivery_count
+      - component.update: wakeup_reason_sensor
+
+  # ---- Record delivery timestamp ----
+  - id: record_delivery_time
+    mode: single
+    then:
+      - lambda: |-
+          auto now = id(sntp_time).now();
+          char buf[32];
+          if (now.is_valid()) {
+            snprintf(buf, sizeof(buf), "%02d:%02d  %02d.%02d.%04d",
+                     now.hour, now.minute,
+                     now.day_of_month, now.month, now.year);
+          } else {
+            snprintf(buf, sizeof(buf), "~%lums (no NTP)", millis());
+          }
+          id(last_delivery_time) = std::string(buf);
+          ESP_LOGW("delivery", "Recorded: %s", buf);
+      - component.update: last_delivery_sensor
+
+  # ---- Unified event publisher ----
+  - id: publish_event
+    mode: single
+    then:
+      - mqtt.publish:
+          topic: "mailbox/event"
+          payload: !lambda |-
+            uint32_t awake = (uint32_t)millis() - id(wake_time_ms);
+            char buf[512];
+            snprintf(buf, sizeof(buf),
+              "{\"type\":\"%s\",\"count\":%d,\"temp\":%.1f,\"hum\":%.0f,"
+              "\"batt_v\":%.2f,\"batt_pct\":%.0f,\"batt_days\":%.0f,"
+              "\"lid_stuck\":%s,\"lid_open\":%s,\"wake\":\"%s\","
+              "\"last_mail\":\"%s\",\"crashes\":%d,\"awake_ms\":%u}",
+              id(event_type).c_str(),
+              id(mail_count),
+              id(mailbox_temp).state,
+              id(mailbox_humidity).state,
+              id(battery_voltage).state,
+              id(battery_pct),
+              id(battery_days),
+              id(lid_stuck_open) ? "true" : "false",
+              id(lid_open_after_grace) ? "true" : "false",
+              id(wake_reason_text).c_str(),
+              id(last_delivery_time).c_str(),
+              id(consecutive_crashes),
+              awake);
+            return std::string(buf);
+          retain: false
+
+  # ---- Check OTA mode ----
+  - id: check_ota_mode
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return id(ota_requested);'
+          then:
+            - logger.log:
+                level: WARN
+                format: ">>> OTA MODE -- staying awake"
+            - mqtt.publish:
+                topic: "mailbox/status"
+                payload: "OTA_ACTIVE"
+                retain: false
+            - delay: !lambda 'return ${ota_stay_s} * 1000;'
+            - mqtt.publish:
+                topic: "mailbox/ota_mode"
+                payload: "OFF"
+                retain: true
+            - lambda: 'id(ota_requested) = false;'
+            - mqtt.publish:
+                topic: "mailbox/status"
+                payload: "OTA_DONE"
+                retain: false
+            - delay: 100ms
+
+  # ---- Normal sleep: ext1 (GPIO4) + timer ----
+  - id: go_to_sleep
+    mode: single
+    then:
+      - lambda: |-
+          // Reset boot flags
+          id(is_mail_event) = false;
+          id(is_timer_event) = false;
+          id(is_first_boot) = false;
+          id(is_lid_stuck_wake) = false;
+          id(lid_open_after_grace) = false;
+          id(ota_requested) = false;
+          ESP_LOGW("sleep", "Normal sleep: ext1 + timer (%dmin)",
+                   ${sleep_minutes});
+      - deep_sleep.enter: deep_sleep_ctrl
+
+  # ---- Timer-only sleep: lid stuck, disable GPIO wake ----
+  - id: sleep_timer_only
+    mode: single
+    then:
+      - lambda: |-
+          // Reset boot flags
+          id(is_mail_event) = false;
+          id(is_timer_event) = false;
+          id(is_first_boot) = false;
+          id(is_lid_stuck_wake) = false;
+          id(lid_open_after_grace) = false;
+          id(ota_requested) = false;
+
+          ESP_LOGW("sleep", "TIMER-ONLY sleep (lid stuck) -- %dmin",
+                   ${sleep_minutes});
+          // Must bypass ESPHome deep_sleep component to disable ext1
+          esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+          esp_sleep_enable_timer_wakeup(${sleep_minutes}ULL * 60ULL * 1000000ULL);
+          esp_deep_sleep_start();
+
+####################################################################
+#  BUTTONS
+####################################################################
+button:
+  - platform: template
+    name: "Reset Mail Count"
+    icon: mdi:delete
+    on_press:
+      - lambda: |-
+          id(mail_count) = 0;
+          id(lid_stuck_open) = false;
+          id(consecutive_crashes) = 0;
+          id(last_delivery_time) = "No Mail Yet";
+      - component.update: mail_delivery_count
+      - mqtt.publish:
+          topic: "mailbox/event"
+          payload: '{"type":"reset","count":0}'
+          retain: false
+
+

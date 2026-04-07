@@ -1,0 +1,466 @@
+####################################################################
+#  PLANT MOISTURE MONITOR v5 -- ESP32-C3
+#  -----------------------------------------------------------------
+#  Fixes from v4:
+#    6. deep_sleep.allow added before every deep_sleep.enter -- in
+#       current ESPHome, deep_sleep.enter silently no-ops when
+#       deep_sleep.prevent is active (set in on_boot). Without allow,
+#       device never sleeps after button/timer wake.
+#
+#  Fixes from v3:
+#    1. Display: oled.turn_on() added before drawing -- panel was
+#       hardware-off after turn_off() and never re-enabled (black screen)
+#    2. Button wake: removed gpio_get_level() check in P600 -- quick
+#       taps released before P600 ran were misclassified as timer wake
+#    3. Sleep: oled.turn_off() called before deep_sleep.enter in both
+#       display_off_timer and soil_pct.on_value -- panel left ON caused
+#       stale-frame flicker on every timer wake
+#    4. wakeup_pin_mode: KEEP_AWAKE -- IGNORE caused rapid wake-sleep
+#       loop when user held button at sleep boundary
+#    5. Removed ESP_SLEEP_WAKEUP_EXT0 check (not available on C3)
+#
+#  ARCHITECTURE: MQTT (fire-and-forget, retained) + native API
+#    - MQTT: sensor data publish (retained, HA auto-discovery)
+#    - API:  ESPHome dashboard OTA, logs, reboot_timeout: 0s
+#            so device is NOT forced to reboot on API disconnect
+#
+#  DEEP SLEEP: GPIO5 button (active LOW) + 3h timer
+#  CRASH GUARD: Priority 800 -- sleeps BEFORE WiFi/MQTT starts
+#
+#  WIRING:
+#    GPIO1  -- Capacitive soil moisture sensor (ADC 0-3.3V)
+#    GPIO5  -- Wake button (active LOW, internal pull-up)
+#    GPIO8  -- I2C SCL -> SSD1306 OLED 128x64
+#    GPIO10 -- I2C SDA -> SSD1306 OLED 128x64
+#
+#  WAKE BEHAVIOR:
+#    Timer (3h):    Read -> publish MQTT (retained) -> sleep (~8s awake)
+#    Button press:  Read -> OLED ON -> auto-off 15s -> sleep
+#    Button while awake: resets 15s countdown
+#
+#  OTA UPDATE PROCEDURE:
+#    1. Publish retained ON  -> topic: plant-moisture/ota_mode
+#       (Next wake: sleep blocked, stays awake)
+#    2. Flash OTA via ESPHome dashboard
+#    3. Publish retained OFF -> topic: plant-moisture/ota_mode
+####################################################################
+
+substitutions:
+  device_name: plant-moisture
+  friendly_name: "Plant Moisture"
+  # Calibration (dry in air = 2.756V, fully submerged = 0.9399V)
+  dry_value:  "2.756"
+  wet_value:  "0.9399"
+  display_timeout: "15s"
+  # WiFi
+  wifi_ssid:      "YOUR_WIFI_SSID"
+  wifi_password:  "YOUR_WIFI_PASSWORD"
+  static_ip:      "YOUR_DEVICE_IP"
+  gateway:        "YOUR_DEVICE_IP"
+  subnet:         "255.255.255.0"
+  dns1:           "YOUR_DEVICE_IP"
+  # MQTT (HA Mosquitto addon)
+  mqtt_broker:    "YOUR_HA_IP"
+  mqtt_port:      "1883"
+  mqtt_user:      "navi18mqtt"
+  mqtt_password:  "YOUR_MQTT_PASSWORD"
+  # Timing
+  sleep_hours:       "3"
+  run_duration_s:    "45"
+  max_crashes:       "3"
+  emergency_sleep_h: "2"
+
+# ==========================================================================
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+  on_boot:
+    # -----------------------------------------------------------------------
+    # PRIORITY 800 - Crash guard: bail BEFORE WiFi/MQTT starts.
+    # -----------------------------------------------------------------------
+    - priority: 800
+      then:
+        - lambda: |-
+            auto rst = esp_reset_reason();
+            if (rst == ESP_RST_BROWNOUT || rst == ESP_RST_WDT || rst == ESP_RST_PANIC) {
+              id(consecutive_crashes) += 1;
+              int crashes = id(consecutive_crashes);
+              uint64_t sleep_us;
+              if (crashes >= ${max_crashes}) {
+                sleep_us = (uint64_t)${emergency_sleep_h} * 3600ULL * 1000000ULL;
+                ESP_LOGE("crash", "BOOT LOOP (#%d) -- emergency sleep %dh",
+                         crashes, ${emergency_sleep_h});
+              } else {
+                sleep_us = 3600ULL * 1000000ULL;
+                ESP_LOGW("crash", "Crash recovery (#%d) -- sleep 60min", crashes);
+              }
+              esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+              esp_sleep_enable_timer_wakeup(sleep_us);
+              esp_deep_sleep_start();
+            }
+
+    # -----------------------------------------------------------------------
+    # PRIORITY 600 - Classify wake cause before WiFi starts.
+    # -----------------------------------------------------------------------
+    - priority: 600
+      then:
+        - lambda: |-
+            auto rst = esp_reset_reason();
+            if (rst == ESP_RST_DEEPSLEEP) {
+              id(consecutive_crashes) = 0;
+              auto cause = esp_sleep_get_wakeup_cause();
+              // FIX 2+5: ESP32-C3 has no EXT0. GPIO wake = button (only
+              // one wakeup pin configured). Removed gpio_get_level() --
+              // quick taps release before P600 runs, causing missed detects.
+              if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+                id(is_button_wake) = true;
+                ESP_LOGW("boot", ">>> BUTTON WAKE -- display ON");
+              } else {
+                ESP_LOGW("boot", ">>> TIMER WAKE -- silent publish + sleep");
+              }
+            } else {
+              id(consecutive_crashes) = 0;
+              ESP_LOGW("boot", ">>> COLD/OTA BOOT (rst=%d)", (int)rst);
+            }
+
+    # -----------------------------------------------------------------------
+    # PRIORITY -100 - Main logic.
+    # -----------------------------------------------------------------------
+    - priority: -100
+      then:
+        # Hold sleep open until publish + sleep logic fires
+        - deep_sleep.prevent: deep_sleep_1
+
+        # Button wake: turn display on, start 15s countdown
+        # Timer wake: display stays off (lambda handles it)
+        - if:
+            condition:
+              lambda: 'return id(is_button_wake);'
+            then:
+              - lambda: 'id(display_on) = true;'
+              - script.execute: display_off_timer
+
+        # Wait for MQTT to be ready before ADC readings matter
+        # (ADC auto-reads via update_interval: 2s independently)
+        - script.execute: wait_for_mqtt
+
+# ==========================================================================
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+# ==========================================================================
+globals:
+  - id: consecutive_crashes
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: is_button_wake
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: display_on
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# ==========================================================================
+# DEEP SLEEP
+# ==========================================================================
+deep_sleep:
+  id: deep_sleep_1
+  sleep_duration: ${sleep_hours}h
+  run_duration: ${run_duration_s}s
+  wakeup_pin:
+    number: GPIO5
+    allow_other_uses: true
+    inverted: true
+  wakeup_pin_mode: KEEP_AWAKE  # FIX 4: prevent rapid wake-sleep loop if button held at sleep boundary
+
+# ==========================================================================
+# FIX 1: API restored -- ESPHome dashboard can manage/flash the device.
+# reboot_timeout: 0s -- do NOT reboot when HA API disconnects (device sleeps)
+# ==========================================================================
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD"
+
+logger:
+  level: INFO
+  baud_rate: 115200
+
+# ==========================================================================
+wifi:
+  networks:
+    - ssid: ${wifi_ssid}
+      password: ${wifi_password}
+  power_save_mode: none
+  fast_connect: true
+  output_power: 20dBm
+  manual_ip:
+    static_ip: ${static_ip}
+    gateway:   ${gateway}
+    subnet:    ${subnet}
+    dns1:      ${dns1}
+  reboot_timeout: 0s
+  ap:
+    ssid: "Plant-Moisture Fallback"
+    password: "YOUR_AP_PASSWORD9"
+
+# ==========================================================================
+# MQTT -- retained publish, HA auto-discovers entities.
+# ==========================================================================
+mqtt:
+  id: mqtt_client
+  broker: ${mqtt_broker}
+  port:   ${mqtt_port}
+  username: ${mqtt_user}
+  password: ${mqtt_password}
+  client_id: ${device_name}
+  discovery: true
+  discovery_retain: true
+  reboot_timeout: 0s
+  clean_session: false
+
+  # OTA mode: publish retained ON to plant-moisture/ota_mode to block sleep
+  on_message:
+    - topic: plant-moisture/ota_mode
+      payload: 'ON'
+      then:
+        - logger.log: "OTA mode ON -- sleep blocked"
+        - deep_sleep.prevent: deep_sleep_1
+    - topic: plant-moisture/ota_mode
+      payload: 'OFF'
+      then:
+        - logger.log: "OTA mode OFF -- entering sleep"
+        - deep_sleep.allow: deep_sleep_1  # FIX 5: clear prevent flag before enter
+        - deep_sleep.enter: deep_sleep_1
+
+# ==========================================================================
+i2c:
+  sda: GPIO10
+  scl: GPIO8
+  scan: false
+  id: bus_a
+  frequency: 400kHz
+
+# ==========================================================================
+# SCRIPTS
+# ==========================================================================
+script:
+  # -------------------------------------------------------------------
+  # wait_for_mqtt: just waits for connectivity.
+  # The ADC auto-reads via update_interval independently.
+  # soil_raw.on_value -> soil_pct.on_value handles the sleep trigger.
+  # -------------------------------------------------------------------
+  - id: wait_for_mqtt
+    mode: single
+    then:
+      - wait_until:
+          condition:
+            lambda: |-
+              return wifi::global_wifi_component->is_connected() &&
+                     id(mqtt_client).is_connected();
+          timeout: 15s
+      - lambda: |-
+          if (id(mqtt_client).is_connected()) {
+            ESP_LOGI("mqtt", "Connected -- readings will publish");
+          } else {
+            ESP_LOGW("mqtt", "MQTT timeout -- run_duration will catch sleep");
+          }
+
+  # -------------------------------------------------------------------
+  # display_off_timer: auto-off + sleep (button wake only)
+  # mode: restart -- button press resets the 15s countdown
+  # -------------------------------------------------------------------
+  - id: display_off_timer
+    mode: restart
+    then:
+      - delay: ${display_timeout}
+      - lambda: |-
+          id(display_on) = false;
+          ESP_LOGI("display", "Auto-off -- entering deep sleep");
+      - lambda: 'id(oled).turn_off();'  # FIX 3: ensure panel off before sleep (prevents timer-wake flicker)
+      - deep_sleep.allow: deep_sleep_1  # FIX 5: clear prevent flag before enter
+      - deep_sleep.enter: deep_sleep_1
+
+# ==========================================================================
+# SENSORS
+#
+# FIX 3: ADC now uses update_interval: 2s (auto-reads every 2s).
+# After 3 readings the median filter publishes -> on_value chain fires.
+# This is reliable vs the old manual component.update sequence which had
+# a timing race between the 3rd sample flush and reading soil_pct.
+# ==========================================================================
+sensor:
+  # ADC reads every 2s; median of 3 readings published at ~6s after boot
+  - platform: adc
+    pin: GPIO1
+    name: "${friendly_name} Raw Voltage"
+    id: soil_raw
+    update_interval: 2s
+    attenuation: 12db
+    samples: 10
+    filters:
+      - median:
+          window_size: 3
+          send_every: 3   # publishes after 3 samples (~6s from boot)
+    on_value:
+      then:
+        # Compute and publish moisture %
+        - component.update: soil_pct
+
+  # Moisture % computed from raw voltage + calibration
+  - platform: template
+    name: "${friendly_name} Moisture"
+    id: soil_pct
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: "mdi:water-percent"
+    device_class: moisture
+    state_class: measurement
+    update_interval: never
+    lambda: |-
+      if (!id(soil_raw).has_state()) return NAN;
+      float raw = id(soil_raw).state;
+      float dry = ${dry_value};
+      float wet = ${wet_value};
+      float pct = (dry - raw) / (dry - wet) * 100.0f;
+      if (pct < 0.0f)   pct = 0.0f;
+      if (pct > 100.0f) pct = 100.0f;
+      return pct;
+    on_value:
+      then:
+        # Timer wake: sleep after publish (+1s for MQTT TCP flush)
+        # Button wake: display_off_timer handles sleep
+        - if:
+            condition:
+              lambda: 'return !id(is_button_wake);'
+            then:
+              - delay: 1s
+              - lambda: 'id(oled).turn_off();'  # FIX 3: panel off before sleep
+              - deep_sleep.allow: deep_sleep_1  # FIX 5: clear prevent flag before enter
+              - deep_sleep.enter: deep_sleep_1
+
+# ==========================================================================
+# BINARY SENSORS
+# ==========================================================================
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO5
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+      allow_other_uses: true
+    name: "${friendly_name} Button"
+    id: wake_btn
+    filters:
+      - delayed_on:  100ms
+      - delayed_off: 100ms
+    on_click:
+      min_length: 100ms
+      max_length: 400ms
+      then:
+        - lambda: |-
+            id(display_on) = true;
+            ESP_LOGI("button", "Click -- display ON, timer reset");
+        - script.execute: display_off_timer
+
+  - platform: template
+    name: "${friendly_name} Dry Alert"
+    id: dry_alert
+    device_class: problem
+    lambda: |-
+      return id(soil_pct).has_state() && id(soil_pct).state < 30;
+
+# ==========================================================================
+font:
+  - file: "gfonts://Roboto"
+    id: font_xs
+    size: 8
+  - file: "gfonts://Roboto@500"
+    id: font_md
+    size: 12
+  - file: "gfonts://Roboto@700"
+    id: font_lg
+    size: 24
+
+# ==========================================================================
+# DISPLAY (SSD1306 128x64)
+#
+# oled.turn_off() called every 2s when display_on=false (panel stays off).
+# oled.turn_on() called each cycle when display_on=true (re-enables after
+# hardware-off). Both called before deep_sleep.enter to prevent flicker.
+#
+# Layout:
+#   y= 0.. 8   "Soil Monitor"       font_xs  TOP_CENTER
+#   y= 9       horizontal line
+#   y=14..38   moisture %           font_lg  CENTER at y=26
+#   y=40..47   progress bar
+#   y=49..60   DRY / MOIST / WET    font_md  TOP_CENTER
+#   y=57..64   WiFi:OK | x.xxV      font_xs  left + right
+# ==========================================================================
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    id: oled
+    i2c_id: bus_a
+    update_interval: 2s
+    lambda: |-
+      if (!id(display_on)) {
+        it.fill(COLOR_OFF);
+        // Ensure panel is hardware-off every 2s (survives re-init edge cases).
+        id(oled).turn_off();
+        return;
+      }
+
+      // FIX 1: Re-enable panel after turn_off() -- SSD1306 needs explicit
+      // turn_on() (0xAF) before content is visible. Without this the
+      // framebuffer updates but the screen stays black after button wake.
+      id(oled).turn_on();
+
+      // Header
+      it.printf(64, 0, id(font_xs), TextAlign::TOP_CENTER, "Soil Monitor");
+      it.line(0, 10, 128, 10);
+
+      if (id(soil_pct).has_state()) {
+        float p = id(soil_pct).state;
+
+        // Large moisture %
+        it.printf(64, 26, id(font_lg), TextAlign::CENTER, "%.0f%%", p);
+
+        // Progress bar
+        it.rectangle(2, 40, 124, 8);
+        int bar_w = (int)(p / 100.0f * 122.0f);
+        if (bar_w > 0) it.filled_rectangle(3, 41, bar_w, 6);
+
+        // Status label
+        const char* label;
+        if      (p < 30) label = "DRY";
+        else if (p < 60) label = "MOIST";
+        else             label = "WET";
+        it.printf(64, 49, id(font_md), TextAlign::TOP_CENTER, "%s", label);
+
+      } else {
+        it.print(64, 26, id(font_lg), TextAlign::CENTER, "--%");
+        it.print(64, 49, id(font_xs), TextAlign::TOP_CENTER, "Reading...");
+      }
+
+      // Status bar
+      it.printf(0, 57, id(font_xs),
+        wifi::global_wifi_component->is_connected() ? "WiFi:OK" : "WiFi:--");
+      if (id(soil_raw).has_state())
+        it.printf(128, 57, id(font_xs), TextAlign::TOP_RIGHT,
+          "%.2fV", id(soil_raw).state);
+
+
