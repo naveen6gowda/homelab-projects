@@ -23,7 +23,7 @@ I am an electronics and embedded systems engineer with hands-on experience desig
 | # | Project | Hardware | Key Technologies |
 |---|---------|----------|-----------------|
 | 1 | [PCB Design — CM5 Minima REV3](#1-pcb-design--cm5-minima-rev3) | KiCad | CM5 carrier board, Hailo-8 AI accelerator, M.2, RJ45 |
-| 2 | [PCB Design — Relay Controller](#2-pcb-design--relay-controller) | KiCad | ESP32, 4-ch relay, optocoupler isolation |
+| 2 | [PCB Design — Relay Controller](#2-pcb-design--relay-controller) | KiCad | ESP32-C6-MINI-1, 2-ch relay, optocoupler isolation |
 | 3 | [AI Homelab Infrastructure](#3-ai-homelab-infrastructure) | Proxmox + LXC | Ollama, Local LLM, iGPU passthrough |
 | 4 | [Docker Self-Hosted Services](#4-docker-self-hosted-services) | Debian VM | 26 containers, Immich, n8n, Jellyfin, Vaultwarden |
 | 5 | [Mailbox Alert](#5-mailbox-alert) | ESP32-C6 SuperMini | Deep sleep, MQTT, Reed switch, AHT21 |
@@ -40,7 +40,9 @@ I am an electronics and embedded systems engineer with hands-on experience desig
 
 **Repository:** [github.com/naveen6gowda/KiCad-projects](https://github.com/naveen6gowda/KiCad-projects)
 
-A compact carrier board for the **Raspberry Pi Compute Module 5 (CM5)** — designed to be smaller than the official CM5 IO Board while exposing all peripherals needed for embedded Linux and AI edge applications.
+A compact carrier board for the **Raspberry Pi Compute Module 5 (CM5)** — based on an existing open-source CM5 Minima design from GitHub, adapted and extended with a **Zigbee/Thread module (ESP32-C6-MINI-1)** addition for wireless connectivity. The base design was not created from scratch; the primary contribution was integrating and modifying the board to accommodate the ESP32-C6 Zigbee/Thread module.
+
+> **Note:** This is a derivative of an open-source CM5 carrier board design. The Zigbee/Thread (ESP32-C6-MINI-1) module integration was added on top of the existing layout.
 
 **What's in the KiCad repo:**
 - Complete schematic (`.kicad_sch`) and PCB layout (`.kicad_pcb`) — routed, DRC clean
@@ -63,12 +65,13 @@ A compact carrier board for the **Raspberry Pi Compute Module 5 (CM5)** — desi
 
 **Repository:** [github.com/naveen6gowda/KiCad-projects](https://github.com/naveen6gowda/KiCad-projects)
 
-A custom **ESP32-based 4-channel relay controller** PCB — the hardware behind the relay switch automations running in the ESPHome projects below.
+A custom **ESP32-C6-MINI-1-based 2-channel relay controller** PCB — the hardware behind the relay switch automations running in the ESPHome projects below.
 
 **Design Features:**
-- 4-channel relay (mains-rated, 10A per channel)
-- **Optocoupler isolation** between ESP32 logic and relay coils — protects the MCU from mains transients
-- Onboard **HLK-PM01** mains-to-5V + **AMS1117** LDO regulation — single mains input, no external PSU
+- 2-channel relay (mains-rated, 10A per channel)
+- **Optocoupler isolation** between ESP32-C6 logic and relay coils — protects the MCU from mains transients
+- Onboard **HLK-PM01** mains-to-5V — single mains input, no external PSU
+- **ESP32-C6-MINI-1 module** used directly — module has onboard regulation, no external LDO required
 - Status LED per relay channel
 - Screw terminals for field wiring
 
@@ -320,7 +323,7 @@ A low-power e-ink display node showing Home Assistant data. E-paper retains the 
 
 | Skill | Evidence in this repo |
 |-------|----------------------|
-| PCB design (KiCad) | CM5 Minima REV3 (Hailo-8, M.2, RJ45), relay controller — schematic to production |
+| PCB design (KiCad) | CM5 Minima REV3 (based on open-source design, extended with ESP32-C6 Zigbee/Thread module), relay controller — schematic to production |
 | Local AI infrastructure | Ollama, iGPU passthrough, Open WebUI, model management |
 | ESP32 firmware (ESPHome/C++) | 9 production devices — deep sleep, ADC, I2C, SPI, UART, I2S |
 | MQTT protocol | Fire-and-forget, retained topics, HA auto-discovery |
@@ -370,3 +373,5 @@ homelab-projects/
 ---
 
 *All projects in this repository are real, deployed, and actively maintained. ESPHome YAML files have WiFi credentials and API keys replaced with placeholders — use a `secrets.yaml` file in production.*
+
+*This portfolio — including the homelab infrastructure setup, PCB modifications, and ESPHome firmware — was developed with the assistance of AI (Claude by Anthropic). The designs, decisions, and deployments are mine; AI helped accelerate the process.*

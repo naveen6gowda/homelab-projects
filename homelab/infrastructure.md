@@ -65,3 +65,7 @@ OPNsense Firewall / Router
 - **VLAN segmentation** — IoT devices cannot reach management network; HA is the only bridge
 - **Local-first** — Ollama, MQTT broker, and ESPHome all run locally; no cloud dependencies
 - **MQTT over native API** for battery devices — fire-and-forget avoids HA API reconnect delays during short wake windows
+
+---
+
+*This infrastructure was designed and deployed with AI assistance (Claude by Anthropic).*
