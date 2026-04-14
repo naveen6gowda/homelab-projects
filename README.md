@@ -145,6 +145,7 @@ All ESPHome devices integrate with **Home Assistant** on an isolated IoT VLAN. Y
 ## 5. Mailbox Alert
 
 **File:** [`esphome/mailbox-alert.yaml`](./esphome/mailbox-alert.yaml)
+**Workflow:** Spec-driven development using [GitHub Spec Kit](https://github.com/github/spec-kit) (`specify` CLI) — features were specified as structured markdown specs before implementation, enabling predictable, reviewable AI-assisted development.
 
 A battery-powered IoT mailbox sensor that wakes from deep sleep when mail is delivered and sends an instant notification to Home Assistant.
 
