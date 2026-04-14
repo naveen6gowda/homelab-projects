@@ -125,10 +125,20 @@ esphome:
               bool timer_wake = (cause == ESP_SLEEP_WAKEUP_TIMER);
 
               if (gpio_wake && !id(lid_stuck_open)) {
-                id(is_mail_event) = true;
-                id(mail_count) += 1;
-                id(wake_reason_text) = "Mail Delivery";
-                ESP_LOGW("boot", ">>> MAIL! Count: %d", id(mail_count));
+                // Check if this is a collection (second GPIO4 wake within 10min of last delivery)
+                time_t now_epoch = time(nullptr);
+                if (id(last_delivery_epoch) > 0 &&
+                    (now_epoch - (time_t)id(last_delivery_epoch)) < 600) {
+                  id(is_collection_event) = true;
+                  id(wake_reason_text) = "Mail Collected";
+                  ESP_LOGW("boot", ">>> COLLECTION! delta=%llds",
+                           (long long)(now_epoch - (time_t)id(last_delivery_epoch)));
+                } else {
+                  id(is_mail_event) = true;
+                  id(mail_count) += 1;
+                  id(wake_reason_text) = "Mail Delivery";
+                  ESP_LOGW("boot", ">>> MAIL! Count: %d", id(mail_count));
+                }  // end collection vs delivery
 
               } else if (gpio_wake && id(lid_stuck_open)) {
                 id(is_lid_stuck_wake) = true;
@@ -330,6 +340,39 @@ esphome:
                           - delay: 100ms
                     - script.execute: sleep_timer_only
 
+        # --- COLLECTION EVENT: someone opened lid to take mail ---
+        - if:
+            condition:
+              lambda: 'return id(is_collection_event);'
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Collection event -- connecting..."
+              - wait_until:
+                  condition:
+                    mqtt.connected:
+                  timeout: 10s
+              - if:
+                  condition:
+                    mqtt.connected:
+                  then:
+                    - script.execute: read_sensors
+                    - script.wait: read_sensors
+                    - lambda: |-
+                        id(event_type) = "collected";
+                        id(is_collection_event) = false;
+                        id(last_delivery_epoch) = 0;
+                    - script.execute: publish_event
+                    - script.wait: publish_event
+                    - delay: 100ms
+                    - script.execute: check_ota_mode
+                    - script.wait: check_ota_mode
+                  else:
+                    - logger.log:
+                        level: ERROR
+                        format: "MQTT timeout -- collected notification lost!"
+              - script.execute: go_to_sleep
+
         # --- TIMER EVENT: sensors -> publish -> sleep ---
         - if:
             condition:
@@ -468,6 +511,14 @@ globals:
     restore_value: yes
     initial_value: '"No Mail Yet"'
   - id: consecutive_crashes
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: is_collection_event
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: last_delivery_epoch
     type: int
     restore_value: yes
     initial_value: '0'
@@ -671,7 +722,8 @@ script:
             snprintf(buf, sizeof(buf), "~%lums (no NTP)", millis());
           }
           id(last_delivery_time) = std::string(buf);
-          ESP_LOGW("delivery", "Recorded: %s", buf);
+          id(last_delivery_epoch) = (int)now.timestamp;
+          ESP_LOGW("delivery", "Recorded: %s (epoch=%d)", buf, (int)now.timestamp);
       - component.update: last_delivery_sensor
 
   # ---- Unified event publisher ----
@@ -743,6 +795,7 @@ script:
           id(is_lid_stuck_wake) = false;
           id(lid_open_after_grace) = false;
           id(ota_requested) = false;
+          id(is_collection_event) = false;
           ESP_LOGW("sleep", "Normal sleep: ext1 + timer (%dmin)",
                    ${sleep_minutes});
       - deep_sleep.enter: deep_sleep_ctrl
@@ -759,6 +812,7 @@ script:
           id(is_lid_stuck_wake) = false;
           id(lid_open_after_grace) = false;
           id(ota_requested) = false;
+          id(is_collection_event) = false;
 
           ESP_LOGW("sleep", "TIMER-ONLY sleep (lid stuck) -- %dmin",
                    ${sleep_minutes});
