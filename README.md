@@ -1,17 +1,24 @@
-# Naveen Gowda — Embedded Systems & Home Automation Portfolio
+# Naveen Gowda — AI, Embedded Systems & Home Automation Portfolio
 
-> **Electronics & Embedded Systems Engineer** | PCB Design · AI Infrastructure · ESPHome · ESP32 · Home Assistant · Docker
+> **Embedded Systems Engineer exploring AI / LLMs** | Local LLM Infrastructure · LangChain · LangGraph · LoRA Fine-Tuning · PCB Design · ESP32 · Home Assistant · Docker
 
-This repository showcases hands-on embedded systems and home automation projects built with real hardware, deployed in a production home environment. Every project here runs 24/7 and was designed, debugged, and refined through real-world use.
+This repository showcases hands-on work across **local AI / LLM infrastructure**, **LLM experimentation (LangChain, LangGraph, LoRA fine-tuning)**, and **embedded / home-automation projects** built with real hardware and deployed in a production home environment. Every project here runs 24/7 and was designed, debugged, and refined through real-world use.
+
+**Related repositories (AI / LLM work):**
+- [LLM_fine_tuning](https://github.com/naveen6gowda/LLM_fine_tuning) — LoRA fine-tuning of an open-source LLM (Hugging Face PEFT)
+- [python-for-ai](https://github.com/naveen6gowda/python-for-ai) — LangChain / LangGraph experimental chains and graph-based agent workflows
+- [KiCad-projects](https://github.com/naveen6gowda/KiCad-projects) — PCB designs (CM5 carrier, relay controller)
 
 ---
 
 ## About Me
 
-I am an electronics and embedded systems engineer with hands-on experience designing, building, and deploying IoT devices. My work spans:
+I am an embedded systems engineer with strong hands-on interest in **AI / LLMs** — local inference, agent workflows, and parameter-efficient fine-tuning — alongside a background in IoT and embedded hardware. My work spans:
 
+- **AI / LLM experimentation** — LangChain & LangGraph (Python) for chains and agent workflows; LoRA fine-tuning with Hugging Face PEFT
+- **Local AI infrastructure** — self-hosted LLM inference on custom Proxmox homelab with GPU/iGPU passthrough (Ollama, Open WebUI)
+- **AI-agent architectures** — exploring multi-step agent patterns for home-automation and personal-productivity use cases
 - **PCB design** for custom embedded boards (KiCad) — from schematic to 3D-rendered production layout
-- **AI infrastructure** — self-hosted local LLM inference on custom Proxmox homelab with GPU passthrough
 - **Firmware development** for ESP32 microcontrollers using ESPHome / C++ (ESP-IDF & Arduino framework)
 - **Home automation** integration with Home Assistant via MQTT and native API
 - **Linux systems** — Proxmox hypervisor, LXC containers, Docker, VLANs, OPNsense routing
@@ -20,68 +27,45 @@ I am an electronics and embedded systems engineer with hands-on experience desig
 
 ## Project Overview
 
-| # | Project | Hardware | Key Technologies |
-|---|---------|----------|-----------------|
-| 1 | [PCB Design — CM5 Minima REV3](#1-pcb-design--cm5-minima-rev3) | KiCad | CM5 carrier board, Hailo-8 AI accelerator, M.2, RJ45 |
-| 2 | [PCB Design — Relay Controller](#2-pcb-design--relay-controller) | KiCad | ESP32-C6-MINI-1, 2-ch relay, optocoupler isolation |
-| 3 | [AI Homelab Infrastructure](#3-ai-homelab-infrastructure) | Proxmox + LXC | Ollama, Local LLM, iGPU passthrough |
-| 4 | [Docker Self-Hosted Services](#4-docker-self-hosted-services) | Debian VM | 26 containers, Immich, n8n, Jellyfin, Vaultwarden |
-| 5 | [Mailbox Alert](#5-mailbox-alert) | ESP32-C6 SuperMini | Deep sleep, MQTT, Reed switch, AHT21 |
-| 6 | [Plant Moisture Monitor](#6-plant-moisture-monitor) | ESP32-C3 | ADC, OLED, Deep sleep, Battery optimized |
-| 7 | [Hall Clock & Presence Display](#7-hall-clock--presence-display) | ESP32-C3 | LD2410C Radar, SSD1306 OLED, Weather |
-| 8 | [Touch Voice Assistant Dashboard](#8-touch-voice-assistant-dashboard) | ESP32-S3 (16MB+PSRAM) | I2S audio, Wake word, Touchscreen |
-| 9 | [Room Environment Monitors](#9-room-environment-monitors) | ESP32-C3 | BME280, AHT20, ENS160 CO2/AQI |
-| 10 | [Kitchen Smart Display](#10-kitchen-smart-display) | ESP32-S3 | Relay control, Multi-page UI, Alerts |
-| 11 | [E-Paper Display](#11-e-paper-display) | ESP32-C3 | E-ink, Low power, Home Assistant data |
+| # | Project | Hardware / Stack | Key Technologies |
+|---|---------|------------------|-----------------|
+| 1 | [LLM Experimentation — LangChain, LangGraph & LoRA Fine-Tuning](#1-llm-experimentation--langchain-langgraph--lora-fine-tuning) | Python | LangChain, LangGraph, Hugging Face PEFT, LoRA |
+| 2 | [AI Homelab Infrastructure](#2-ai-homelab-infrastructure) | Proxmox + LXC | Ollama, Local LLM, iGPU passthrough |
+| 3 | [Docker Self-Hosted Services](#3-docker-self-hosted-services) | Debian VM | 26 containers, Immich (ML), Open WebUI, n8n |
+| 4 | [PCB Design — CM5 Minima REV3](#4-pcb-design--cm5-minima-rev3) | KiCad | CM5 carrier board, Hailo-8 AI accelerator, M.2, RJ45 |
+| 5 | [PCB Design — Relay Controller](#5-pcb-design--relay-controller) | KiCad | ESP32-C6-MINI-1, 2-ch relay, optocoupler isolation |
+| 6 | [Mailbox Alert](#6-mailbox-alert) | ESP32-C6 SuperMini | Deep sleep, MQTT, Reed switch, AHT21 |
+| 7 | [Plant Moisture Monitor](#7-plant-moisture-monitor) | ESP32-C3 | ADC, OLED, Deep sleep, Battery optimized |
+| 8 | [Hall Clock & Presence Display](#8-hall-clock--presence-display) | ESP32-C3 | LD2410C Radar, SSD1306 OLED, Weather |
+| 9 | [Touch Voice Assistant Dashboard](#9-touch-voice-assistant-dashboard) | ESP32-S3 (16MB+PSRAM) | I2S audio, Wake word, Touchscreen |
+| 10 | [Room Environment Monitors](#10-room-environment-monitors) | ESP32-C3 | BME280, AHT20, ENS160 CO2/AQI |
+| 11 | [Kitchen Smart Display](#11-kitchen-smart-display) | ESP32-S3 | Relay control, Multi-page UI, Alerts |
+| 12 | [E-Paper Display](#12-e-paper-display) | ESP32-C3 | E-ink, Low power, Home Assistant data |
 
 ---
 
-## 1. PCB Design — CM5 Minima REV3
+## 1. LLM Experimentation — LangChain, LangGraph & LoRA Fine-Tuning
 
-**Repository:** [github.com/naveen6gowda/KiCad-projects](https://github.com/naveen6gowda/KiCad-projects)
+**Repositories:**
+- [github.com/naveen6gowda/LLM_fine_tuning](https://github.com/naveen6gowda/LLM_fine_tuning) — LoRA fine-tuning experiments
+- [github.com/naveen6gowda/python-for-ai](https://github.com/naveen6gowda/python-for-ai) — LangChain & LangGraph experimental projects
 
-A compact carrier board for the **Raspberry Pi Compute Module 5 (CM5)** — based on an existing open-source CM5 Minima design from GitHub, adapted and extended with a **Zigbee/Thread module (ESP32-C6-MINI-1)** addition for wireless connectivity. The base design was not created from scratch; the primary contribution was integrating and modifying the board to accommodate the ESP32-C6 Zigbee/Thread module.
+Hands-on exploration of modern LLM tooling — building agent workflows, fine-tuning open-source models, and learning AI-agent architectures end-to-end.
 
-> **Note:** This is a derivative of an open-source CM5 carrier board design. The Zigbee/Thread (ESP32-C6-MINI-1) module integration was added on top of the existing layout.
+**Highlights:**
+- **LangChain & LangGraph (Python)** — experimental chains and graph-based agent workflows; example projects published on GitHub.
+- **LoRA fine-tuning on an open-source LLM** using Hugging Face PEFT (AI-assisted) — dataset preparation, adapter training, and weight validation; trained weights retained for further experimentation.
+- **Currently learning AI-agent architectures** — exploring multi-step agent patterns for home-automation and personal-productivity use cases.
 
-**What's in the KiCad repo:**
-- Complete schematic (`.kicad_sch`) and PCB layout (`.kicad_pcb`) — routed, DRC clean
-- Custom footprint library (`CM5IO.pretty`) — CM5 module, M.2 sockets, Hirose connectors
-- Custom 3D models (`3d_lib/`) — Hirose FH12, JST BM series, SHTC3, RJ45, Hailo M.2
-- Blender renders (`.pcb3d`) and CNC enclosure design (`.step`)
-- PDF schematic for easy review
-
-**Design Highlights:**
-- **Hailo-8 M.2 M-key slot** — AI accelerator (8 TOPS) for on-device inference
-- **M.2 B-key 2230 slot** — NVMe SSD storage
-- **RJ45 Gigabit Ethernet** with magnetics
-- **USB 3.0** (stacked connector), DSI, CSI camera interfaces
-- **SHTC3** onboard temperature/humidity sensor
-- **4× M2.5 mounting holes** for CNC enclosure integration
+**Stack:** Python · LangChain · LangGraph · Hugging Face Transformers · PEFT / LoRA · PyTorch · Ollama (local inference target)
 
 ---
 
-## 2. PCB Design — Relay Controller
-
-**Repository:** [github.com/naveen6gowda/KiCad-projects](https://github.com/naveen6gowda/KiCad-projects)
-
-A custom **ESP32-C6-MINI-1-based 2-channel relay controller** PCB — the hardware behind the relay switch automations running in the ESPHome projects below.
-
-**Design Features:**
-- 2-channel relay (mains-rated, 10A per channel)
-- **Optocoupler isolation** between ESP32-C6 logic and relay coils — protects the MCU from mains transients
-- Onboard **HLK-PM01** mains-to-5V — single mains input, no external PSU
-- **ESP32-C6-MINI-1 module** used directly — module has onboard regulation, no external LDO required
-- Status LED per relay channel
-- Screw terminals for field wiring
-
----
-
-## 3. AI Homelab Infrastructure
+## 2. AI Homelab Infrastructure
 
 **Directory:** [`homelab/`](./homelab/) · [`ai/`](./ai/)
 
-A self-hosted AI inference stack running locally — no cloud, no subscription, full control.
+A self-hosted AI inference stack running locally — no cloud, no subscription, full control. This is the platform that hosts the local LLMs used for the experimentation work above.
 
 **Infrastructure:**
 - **Proxmox VE** hypervisor on a mini-PC (x86, 4-core, 16GB RAM)
@@ -103,11 +87,11 @@ Proxmox Host
     └── VLAN Mgmt   — Proxmox, Ollama, management
 ```
 
-**Why self-hosted:** Privacy (no data leaves home), zero latency, no API costs, and real infrastructure experience.
+**Why self-hosted:** Privacy (no data leaves home), zero latency, no API costs, and real infrastructure experience for local LLM serving and agent workflows.
 
 ---
 
-## 4. Docker Self-Hosted Services
+## 3. Docker Self-Hosted Services
 
 **Directory:** [`docker/`](./docker/)
 
@@ -136,13 +120,54 @@ Full compose file (secrets removed) + architecture diagram: [`docker/`](./docker
 
 ---
 
+## 4. PCB Design — CM5 Minima REV3
+
+**Repository:** [github.com/naveen6gowda/KiCad-projects](https://github.com/naveen6gowda/KiCad-projects)
+
+A compact carrier board for the **Raspberry Pi Compute Module 5 (CM5)** — based on an existing open-source CM5 Minima design from GitHub, adapted and extended with a **Zigbee/Thread module (ESP32-C6-MINI-1)** addition for wireless connectivity. The base design was not created from scratch; the primary contribution was integrating and modifying the board to accommodate the ESP32-C6 Zigbee/Thread module.
+
+> **Note:** This is a derivative of an open-source CM5 carrier board design. The Zigbee/Thread (ESP32-C6-MINI-1) module integration was added on top of the existing layout.
+
+**What's in the KiCad repo:**
+- Complete schematic (`.kicad_sch`) and PCB layout (`.kicad_pcb`) — routed, DRC clean
+- Custom footprint library (`CM5IO.pretty`) — CM5 module, M.2 sockets, Hirose connectors
+- Custom 3D models (`3d_lib/`) — Hirose FH12, JST BM series, SHTC3, RJ45, Hailo M.2
+- Blender renders (`.pcb3d`) and CNC enclosure design (`.step`)
+- PDF schematic for easy review
+
+**Design Highlights:**
+- **Hailo-8 M.2 M-key slot** — AI accelerator (8 TOPS) for on-device inference
+- **M.2 B-key 2230 slot** — NVMe SSD storage
+- **RJ45 Gigabit Ethernet** with magnetics
+- **USB 3.0** (stacked connector), DSI, CSI camera interfaces
+- **SHTC3** onboard temperature/humidity sensor
+- **4× M2.5 mounting holes** for CNC enclosure integration
+
+---
+
+## 5. PCB Design — Relay Controller
+
+**Repository:** [github.com/naveen6gowda/KiCad-projects](https://github.com/naveen6gowda/KiCad-projects)
+
+A custom **ESP32-C6-MINI-1-based 2-channel relay controller** PCB — the hardware behind the relay switch automations running in the ESPHome projects below.
+
+**Design Features:**
+- 2-channel relay (mains-rated, 10A per channel)
+- **Optocoupler isolation** between ESP32-C6 logic and relay coils — protects the MCU from mains transients
+- Onboard **HLK-PM01** mains-to-5V — single mains input, no external PSU
+- **ESP32-C6-MINI-1 module** used directly — module has onboard regulation, no external LDO required
+- Status LED per relay channel
+- Screw terminals for field wiring
+
+---
+
 ## ESPHome Projects
 
 All ESPHome devices integrate with **Home Assistant** on an isolated IoT VLAN. YAML configs are in [`/esphome`](./esphome/) (credentials removed — use `secrets.yaml` for your deployment).
 
 ---
 
-## 5. Mailbox Alert
+## 6. Mailbox Alert
 
 **File:** [`esphome/mailbox-alert.yaml`](./esphome/mailbox-alert.yaml)
 **Workflow:** Spec-driven development using [GitHub Spec Kit](https://github.com/github/spec-kit) (`specify` CLI) — features were specified as structured markdown specs before implementation, enabling predictable, reviewable AI-assisted development.
@@ -171,7 +196,7 @@ Timer (60min) → wakeup → temp/humidity publish → deep sleep
 
 ---
 
-## 6. Plant Moisture Monitor
+## 7. Plant Moisture Monitor
 
 **File:** [`esphome/plant-moisture.yaml`](./esphome/plant-moisture.yaml)
 
@@ -205,7 +230,7 @@ A battery-optimized soil moisture sensor with OLED display. Completely rewritten
 
 ---
 
-## 7. Hall Clock & Presence Display
+## 8. Hall Clock & Presence Display
 
 **File:** [`esphome/hall-clock.yaml`](./esphome/hall-clock.yaml)
 
@@ -226,7 +251,7 @@ A hallway clock with live time, weather, temperature, humidity, and radar-based 
 
 ---
 
-## 8. Touch Voice Assistant Dashboard
+## 9. Touch Voice Assistant Dashboard
 
 **File:** [`esphome/touch-voice-assistant.yaml`](./esphome/touch-voice-assistant.yaml)
 
@@ -256,7 +281,7 @@ A wall-mounted smart home dashboard combining touchscreen control, ambient senso
 
 ---
 
-## 9. Room Environment Monitors
+## 10. Room Environment Monitors
 
 **Files:**
 - [`esphome/bathroom-monitor.yaml`](./esphome/bathroom-monitor.yaml)
@@ -281,7 +306,7 @@ Distributed sensor network covering every room — temperature, humidity, CO₂,
 
 ---
 
-## 10. Kitchen Smart Display
+## 11. Kitchen Smart Display
 
 **File:** [`esphome/kitchen-display.yaml`](./esphome/kitchen-display.yaml)
 
@@ -303,7 +328,7 @@ A kitchen control panel with live sensor data, appliance status, and one-touch c
 
 ---
 
-## 11. E-Paper Display
+## 12. E-Paper Display
 
 **File:** [`esphome/epaper.yaml`](./esphome/epaper.yaml)
 
@@ -322,10 +347,13 @@ A low-power e-ink display node showing Home Assistant data. E-paper retains the 
 
 ## Skills Demonstrated
 
-| Skill | Evidence in this repo |
-|-------|----------------------|
+| Skill | Evidence |
+|-------|----------|
+| **LLM application development** | LangChain & LangGraph chains and agent workflows — see [python-for-ai](https://github.com/naveen6gowda/python-for-ai) |
+| **LLM fine-tuning** | LoRA / PEFT fine-tuning of an open-source LLM with Hugging Face — see [LLM_fine_tuning](https://github.com/naveen6gowda/LLM_fine_tuning) |
+| **AI-agent architectures** | Currently exploring multi-step agent patterns for home-automation & productivity |
+| **Local AI infrastructure** | Ollama, iGPU passthrough, Open WebUI, model management on Proxmox homelab |
 | PCB design (KiCad) | CM5 Minima REV3 (based on open-source design, extended with ESP32-C6 Zigbee/Thread module), relay controller — schematic to production |
-| Local AI infrastructure | Ollama, iGPU passthrough, Open WebUI, model management |
 | ESP32 firmware (ESPHome/C++) | 9 production devices — deep sleep, ADC, I2C, SPI, UART, I2S |
 | MQTT protocol | Fire-and-forget, retained topics, HA auto-discovery |
 | Battery optimization | Crash guards, deep sleep sequencing, display power management |
