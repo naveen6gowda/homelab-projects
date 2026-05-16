@@ -2,22 +2,20 @@
 
 > **LangChain · LangGraph · Anthropic SDK · Pydantic · AI Agents · Tool Use · Structured Output · Local LLM Inference (Ollama)**
 
-This directory contains my hands-on Python work on **LLM application development** — from the simplest "prompt → LLM → output" chain to a **graph-based, tool-using SRE agent** that operates my homelab.
+Hands-on Python work on **LLM application development** — from the simplest "prompt → LLM → output" chain to a **graph-based, tool-using SRE agent** that operates my homelab.
 
-The goal of this work is concrete: build the skills needed to deliver **AI-agent and LLM-application engineering** in production — chains, structured output, tool use, retrieval, observability, and the graph-based control flow that real agents need.
+This is the layer above local inference: chains, structured output, tool use, and the graph-based control flow that real agents need. The infrastructure these run on (Proxmox + Ollama with iGPU passthrough) is documented in [`ollama-lxc-setup.md`](./ollama-lxc-setup.md).
 
 ---
 
-## Why this work matters (for hiring)
+## What's in here
 
-I am an **embedded systems engineer transitioning into LLM / AI-agent engineering**. Rather than only consume tutorials, I built and ran:
+- **A working multi-turn tool-using agent** running against my own homelab (Proxmox, Home Assistant, Telegram) — not a toy chatbot.
+- **Both halves of LangGraph** — the prebuilt `create_react_agent` shortcut **and** a hand-built `StateGraph` with `ToolNode` + `tools_condition`, so the abstraction isn't a black box.
+- **Both halves of tool use** — LangChain's `@tool` decorator **and** the raw Anthropic Messages API tool loop with `tool_use` / `tool_result` blocks.
+- **Typed, validated LLM output** with Pydantic — including range/enum constraints — instead of brittle string parsing.
 
-1. **A working multi-turn tool-using agent** against my own homelab (Proxmox, Home Assistant, Telegram) — not a toy chatbot.
-2. **Both halves of LangGraph** — the prebuilt `create_react_agent` shortcut **and** a hand-built `StateGraph` with `ToolNode` + `tools_condition` — so I understand what the abstraction is doing under the hood.
-3. **Both halves of tool use** — LangChain's `@tool` decorator **and** the raw Anthropic Messages API tool loop with `tool_use` / `tool_result` blocks.
-4. **Typed, validated LLM output** with Pydantic — including range/enum constraints — instead of brittle string parsing.
-
-Each file below is a self-contained, runnable example.
+Each file is a self-contained, runnable example.
 
 ---
 
@@ -65,7 +63,7 @@ Each file below is a self-contained, runnable example.
 
 ### `Agent_AI/` — the production-style agent
 
-A standalone, **`uv`-packaged** project with its own `pyproject.toml`. This is the most representative piece of work in this folder.
+A standalone, **`uv`-packaged** project with its own `pyproject.toml`. This is the centerpiece of this folder.
 
 **[`Agent_AI/agent_v1_raw.py`](./Agent_AI/agent_v1_raw.py) — HomelabSentinel**
 
@@ -120,10 +118,10 @@ For local inference (no API key, fully offline), point any of these scripts at t
 
 ---
 
-## Skills evidenced
+## Techniques covered
 
-| Skill | Where to look |
-|-------|---------------|
+| Technique | Where to look |
+|-----------|---------------|
 | **LangChain LCEL chains** | [`LCEL.py`](./LCEL.py) |
 | **Structured output with Pydantic** | [`structure_io.py`](./structure_io.py), [`structured.py`](./structured.py) |
 | **Tool-use loop (raw Anthropic SDK)** | [`tools.py`](./tools.py), [`Agent_AI/agent_v1_raw.py`](./Agent_AI/agent_v1_raw.py) |
@@ -138,16 +136,16 @@ For local inference (no API key, fully offline), point any of these scripts at t
 
 ---
 
-## Where this is going
+## Roadmap
 
-Next steps I'm actively working on:
+Active work in progress:
 
 - **Wiring `Agent_AI`'s stubbed tools to real Proxmox + HA APIs** behind a `dry_run` flag.
-- **Wrapping it in FastAPI** (already in `pyproject.toml`) so the agent runs as a long-lived service, triggered from Home Assistant / Telegram.
-- **Adding observability** — token usage, tool-call latency, decision traces — because debugging agents without traces is impossible.
-- **Memory** — short-term conversational + long-term entity memory (Postgres + pgvector — already running in the homelab Docker stack).
+- **Wrapping the agent in FastAPI** (already in `pyproject.toml`) so it runs as a long-lived service, triggered from Home Assistant / Telegram.
+- **Observability** — token usage, tool-call latency, decision traces — debugging agents without traces is impossible.
+- **Memory** — short-term conversational + long-term entity memory on Postgres + pgvector (already running in the homelab Docker stack).
 - **Evaluation** — scripted scenarios (container stopped, memory at 90%, HA offline) to regression-test the agent's decisions as the prompt and toolset evolve.
 
 ---
 
-*All code here was written, run, and debugged by me on my own infrastructure. Where I used AI assistance (Claude) it was as a pair-programmer — the architecture, the decisions, and the homelab integration are mine.*
+*All code here was written, run, and debugged on my own infrastructure. Where AI assistance (Claude) was used, it was as a pair-programmer — the architecture, the decisions, and the homelab integration are mine.*
