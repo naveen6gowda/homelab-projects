@@ -1,23 +1,22 @@
 # Naveen Gowda — AI, Embedded Systems & Home Automation Portfolio
 
-> **Embedded Systems Engineer exploring AI / LLMs** | Local LLM Infrastructure · LangChain · LangGraph · LoRA Fine-Tuning · PCB Design · ESP32 · Home Assistant · Docker
+> **Embedded Systems Engineer exploring AI / LLMs** | LangChain · LangGraph · AI Agents · Local LLM Infrastructure · PCB Design · ESP32 · Home Assistant · Docker
 
-This repository showcases hands-on work across **local AI / LLM infrastructure**, **LLM experimentation (LangChain, LangGraph, LoRA fine-tuning)**, and **embedded / home-automation projects** built with real hardware and deployed in a production home environment. Every project here runs 24/7 and was designed, debugged, and refined through real-world use.
+This repository showcases hands-on work across **AI / LLM application development (LangChain, LangGraph, AI agents)**, **local AI infrastructure**, and **embedded / home-automation projects** built with real hardware and deployed in a production home environment. Every project here runs 24/7 and was designed, debugged, and refined through real-world use.
 
-**Related repositories (AI / LLM work):**
-- [LLM_fine_tuning](https://github.com/naveen6gowda/LLM_fine_tuning) — LoRA fine-tuning of an open-source LLM (Hugging Face PEFT)
-- [python-for-ai](https://github.com/naveen6gowda/python-for-ai) — LangChain / LangGraph experimental chains and graph-based agent workflows
+**Related repositories:**
+- [`ai/`](./ai/) — LangChain / LangGraph chains, tool-use agents, and a homelab SRE agent (in this repo)
 - [KiCad-projects](https://github.com/naveen6gowda/KiCad-projects) — PCB designs (CM5 carrier, relay controller)
 
 ---
 
 ## About Me
 
-I am an embedded systems engineer with strong hands-on interest in **AI / LLMs** — local inference, agent workflows, and parameter-efficient fine-tuning — alongside a background in IoT and embedded hardware. My work spans:
+I am an embedded systems engineer with strong hands-on interest in **AI / LLMs** — local inference, LangChain / LangGraph application development, and AI-agent workflows — alongside a background in IoT and embedded hardware. My work spans:
 
-- **AI / LLM experimentation** — LangChain & LangGraph (Python) for chains and agent workflows; LoRA fine-tuning with Hugging Face PEFT
-- **Local AI infrastructure** — self-hosted LLM inference on custom Proxmox homelab with GPU/iGPU passthrough (Ollama, Open WebUI)
-- **AI-agent architectures** — exploring multi-step agent patterns for home-automation and personal-productivity use cases
+- **AI / LLM application development** — LangChain & LangGraph (Python) for chains, structured output, tool use, and graph-based agent workflows ([`ai/`](./ai/))
+- **AI agents for real systems** — a homelab SRE agent that reads Proxmox + Home Assistant state through tools and acts on it
+- **Local AI infrastructure** — self-hosted LLM inference on custom Proxmox homelab with iGPU passthrough (Ollama, Open WebUI)
 - **PCB design** for custom embedded boards (KiCad) — from schematic to 3D-rendered production layout
 - **Firmware development** for ESP32 microcontrollers using ESPHome / C++ (ESP-IDF & Arduino framework)
 - **Home automation** integration with Home Assistant via MQTT and native API
@@ -29,7 +28,7 @@ I am an embedded systems engineer with strong hands-on interest in **AI / LLMs**
 
 | # | Project | Hardware / Stack | Key Technologies |
 |---|---------|------------------|-----------------|
-| 1 | [LLM Experimentation — LangChain, LangGraph & LoRA Fine-Tuning](#1-llm-experimentation--langchain-langgraph--lora-fine-tuning) | Python | LangChain, LangGraph, Hugging Face PEFT, LoRA |
+| 1 | [LangChain & LangGraph AI Agents](#1-langchain--langgraph-ai-agents) | Python | LangChain, LangGraph, Anthropic SDK, Pydantic, Tool use |
 | 2 | [AI Homelab Infrastructure](#2-ai-homelab-infrastructure) | Proxmox + LXC | Ollama, Local LLM, iGPU passthrough |
 | 3 | [Docker Self-Hosted Services](#3-docker-self-hosted-services) | Debian VM | 26 containers, Immich (ML), Open WebUI, n8n |
 | 4 | [PCB Design — CM5 Minima REV3](#4-pcb-design--cm5-minima-rev3) | KiCad | CM5 carrier board, Hailo-8 AI accelerator, M.2, RJ45 |
@@ -44,20 +43,21 @@ I am an embedded systems engineer with strong hands-on interest in **AI / LLMs**
 
 ---
 
-## 1. LLM Experimentation — LangChain, LangGraph & LoRA Fine-Tuning
+## 1. LangChain & LangGraph AI Agents
 
-**Repositories:**
-- [github.com/naveen6gowda/LLM_fine_tuning](https://github.com/naveen6gowda/LLM_fine_tuning) — LoRA fine-tuning experiments
-- [github.com/naveen6gowda/python-for-ai](https://github.com/naveen6gowda/python-for-ai) — LangChain & LangGraph experimental projects
+**Directory:** [`ai/`](./ai/)
 
-Hands-on exploration of modern LLM tooling — building agent workflows, fine-tuning open-source models, and learning AI-agent architectures end-to-end.
+Hands-on Python work building LLM applications end-to-end — from simple chains to graph-based, tool-using agents. Code, examples, and a homelab SRE agent live in [`ai/`](./ai/).
 
 **Highlights:**
-- **LangChain & LangGraph (Python)** — experimental chains and graph-based agent workflows; example projects published on GitHub.
-- **LoRA fine-tuning on an open-source LLM** using Hugging Face PEFT (AI-assisted) — dataset preparation, adapter training, and weight validation; trained weights retained for further experimentation.
-- **Currently learning AI-agent architectures** — exploring multi-step agent patterns for home-automation and personal-productivity use cases.
+- **LangChain Expression Language (LCEL)** — prompt → model → output-parser chains
+- **Structured output with Pydantic** — typed, validated LLM responses (ratings, enums, nested models)
+- **Tool use with the Anthropic SDK** — raw multi-turn tool-calling loop against `claude-sonnet-4-6`
+- **LangGraph (prebuilt + custom)** — `create_react_agent` and a hand-built `StateGraph` with `ToolNode`/`tools_condition`
+- **HomelabSentinel agent** — an autonomous SRE agent that inspects Proxmox LXC/VM state and Home Assistant entities through tools, decides if a restart is needed, and sends Telegram alerts
+- **Real-data analytics** — Open-Meteo weather pull → pandas DataFrame → matplotlib chart
 
-**Stack:** Python · LangChain · LangGraph · Hugging Face Transformers · PEFT / LoRA · PyTorch · Ollama (local inference target)
+**Stack:** Python · LangChain · LangGraph · Anthropic SDK · Pydantic · `python-dotenv` · pandas · matplotlib · Ollama (local inference target)
 
 ---
 
@@ -65,7 +65,7 @@ Hands-on exploration of modern LLM tooling — building agent workflows, fine-tu
 
 **Directory:** [`homelab/`](./homelab/) · [`ai/`](./ai/)
 
-A self-hosted AI inference stack running locally — no cloud, no subscription, full control. This is the platform that hosts the local LLMs used for the experimentation work above.
+A self-hosted AI inference stack running locally — no cloud, no subscription, full control. This is the platform that hosts the local LLMs used as inference targets for the agent work above.
 
 **Infrastructure:**
 - **Proxmox VE** hypervisor on a mini-PC (x86, 4-core, 16GB RAM)
@@ -349,9 +349,9 @@ A low-power e-ink display node showing Home Assistant data. E-paper retains the 
 
 | Skill | Evidence |
 |-------|----------|
-| **LLM application development** | LangChain & LangGraph chains and agent workflows — see [python-for-ai](https://github.com/naveen6gowda/python-for-ai) |
-| **LLM fine-tuning** | LoRA / PEFT fine-tuning of an open-source LLM with Hugging Face — see [LLM_fine_tuning](https://github.com/naveen6gowda/LLM_fine_tuning) |
-| **AI-agent architectures** | Currently exploring multi-step agent patterns for home-automation & productivity |
+| **LLM application development** | LangChain & LangGraph chains, structured output, LCEL, ReAct agents — see [`ai/`](./ai/) |
+| **AI-agent architectures** | HomelabSentinel: multi-turn tool-using agent over Proxmox + Home Assistant — see [`ai/Agent_AI/`](./ai/Agent_AI/) |
+| **Structured LLM output** | Pydantic-typed responses, validation, enum constraints — see [`ai/structure_io.py`](./ai/structure_io.py) |
 | **Local AI infrastructure** | Ollama, iGPU passthrough, Open WebUI, model management on Proxmox homelab |
 | PCB design (KiCad) | CM5 Minima REV3 (based on open-source design, extended with ESP32-C6 Zigbee/Thread module), relay controller — schematic to production |
 | ESP32 firmware (ESPHome/C++) | 9 production devices — deep sleep, ADC, I2C, SPI, UART, I2S |
@@ -382,8 +382,16 @@ homelab-projects/
 │   └── epaper.yaml
 ├── homelab/                         ← Homelab infrastructure docs
 │   └── infrastructure.md
-├── ai/                              ← AI / Ollama setup guide
-│   └── ollama-lxc-setup.md
+├── ai/                              ← LangChain / LangGraph code + AI agents + Ollama setup
+│   ├── README.md
+│   ├── ollama-lxc-setup.md
+│   ├── LCEL.py                      ← LangChain Expression Language chain
+│   ├── structure_io.py              ← Structured output with Pydantic
+│   ├── tools.py                     ← Anthropic SDK tool-use example
+│   ├── Langraph_prebuilt.py         ← LangGraph create_react_agent
+│   ├── custom_langraph.py           ← Hand-built LangGraph StateGraph
+│   ├── get_data.py                  ← Open-Meteo weather → pandas
+│   └── Agent_AI/                    ← HomelabSentinel SRE agent (Proxmox + HA + Telegram tools)
 ├── docker/                          ← Docker Compose stack (26 containers, secrets removed)
 │   ├── README.md
 │   └── docker-compose.yml
