@@ -16,7 +16,7 @@ I am an embedded systems engineer with strong hands-on interest in **AI / LLMs**
 
 - **AI / LLM application development** — LangChain & LangGraph (Python) for chains, structured output, tool use, and graph-based agent workflows ([`ai/`](./ai/))
 - **AI agents for real systems** — a homelab SRE agent that reads Proxmox + Home Assistant state through tools and acts on it
-- **Local AI infrastructure** — self-hosted LLM inference on custom Proxmox homelab with iGPU passthrough (Ollama, Open WebUI)
+- **Local AI infrastructure** — self-hosted LLM inference on custom Proxmox homelab with iGPU passthrough. Started on **Ollama** with the **OpenClaw** agent stack; currently running **llama.cpp** (Vulkan backend) with the **Hermes Agent**.
 - **PCB design** for custom embedded boards (KiCad) — from schematic to 3D-rendered production layout
 - **Firmware development** for ESP32 microcontrollers using ESPHome / C++ (ESP-IDF & Arduino framework)
 - **Home automation** integration with Home Assistant via MQTT and native API
@@ -29,7 +29,7 @@ I am an embedded systems engineer with strong hands-on interest in **AI / LLMs**
 | # | Project | Hardware / Stack | Key Technologies |
 |---|---------|------------------|-----------------|
 | 1 | [LangChain & LangGraph AI Agents](#1-langchain--langgraph-ai-agents) | Python | LangChain, LangGraph, Anthropic SDK, Pydantic, Tool use |
-| 2 | [AI Homelab Infrastructure](#2-ai-homelab-infrastructure) | Proxmox + LXC | Ollama, Local LLM, iGPU passthrough |
+| 2 | [AI Homelab Infrastructure](#2-ai-homelab-infrastructure) | Proxmox + LXC | llama.cpp + Hermes (current), Ollama + OpenClaw (earlier), iGPU passthrough |
 | 3 | [Docker Self-Hosted Services](#3-docker-self-hosted-services) | Debian VM | 26 containers, Immich (ML), Open WebUI, n8n |
 | 4 | [PCB Design — CM5 Minima REV3](#4-pcb-design--cm5-minima-rev3) | KiCad | CM5 carrier board, Hailo-8 AI accelerator, M.2, RJ45 |
 | 5 | [PCB Design — Relay Controller](#5-pcb-design--relay-controller) | KiCad | ESP32-C6-MINI-1, 2-ch relay, optocoupler isolation |
@@ -57,7 +57,7 @@ Hands-on Python work building LLM applications end-to-end — from simple chains
 - **HomelabSentinel agent** — an autonomous SRE agent that inspects Proxmox LXC/VM state and Home Assistant entities through tools, decides if a restart is needed, and sends Telegram alerts
 - **Real-data analytics** — Open-Meteo weather pull → pandas DataFrame → matplotlib chart
 
-**Stack:** Python · LangChain · LangGraph · Anthropic SDK · Pydantic · `python-dotenv` · pandas · matplotlib · Ollama (local inference target)
+**Stack:** Python · LangChain · LangGraph · Anthropic SDK · Pydantic · `python-dotenv` · pandas · matplotlib · **llama.cpp + Hermes Agent (current local target)** · Ollama + OpenClaw (earlier setup) · OpenAI Codex (GPT-5.5) for day-to-day coding
 
 ---
 
@@ -69,23 +69,30 @@ A self-hosted AI inference stack running locally — no cloud, no subscription, 
 
 **Infrastructure:**
 - **Proxmox VE** hypervisor on a mini-PC (x86, 4-core, 16GB RAM)
-- **Ollama LXC container** (Ubuntu) with iGPU passthrough (`/dev/dri/renderD128`) for accelerated inference
+- **Inference LXC** (Ubuntu) with iGPU passthrough (`/dev/dri/renderD128`) running **llama.cpp** (Vulkan backend) as the current local-inference engine, with the **Hermes Agent** (v0.13.0, ~35 tools / 88 skills, GPT-5.5) on top
+- *Earlier setup on the same LXC: **Ollama** for inference + **OpenClaw** as the agent stack — kept here as historical context since the migration path matters*
 - **Home Assistant OS** VM with ESPHome add-on managing all ESP32 devices
 - **OPNsense** firewall/router with VLAN segmentation (IoT, HA, Management)
 - **Tailscale** — secure remote access without exposing any ports
 
-**AI Stack:**
+**AI Stack (current → historical):**
 ```
 Proxmox Host
-├── Ollama LXC — Local LLM inference (iGPU accelerated)
-│   └── Models: Qwen 3.6B, Llama 3.2, and others on demand
+├── Inference LXC — Local LLM inference (iGPU accelerated)
+│   ├── llama.cpp (Vulkan)     — current inference engine, llama-server on :8080
+│   ├── Hermes Agent (v0.13.0) — current agent stack (35 tools / 88 skills, GPT-5.5)
+│   ├── Ollama                 — earlier inference engine (OpenAI-compatible API on :11434)
+│   └── OpenClaw               — earlier agent stack (migrated to Hermes via `hermes claw migrate`)
+│   Models: Qwen 2.5 3B, Llama 3.2, and others on demand
 ├── Home Assistant OS VM
 │   └── ESPHome add-on → manages all 9 ESP32 devices OTA
 └── OPNsense: VLAN routing + firewall
     ├── VLAN IoT    — all ESP32 nodes (isolated)
     ├── VLAN HA     — Home Assistant
-    └── VLAN Mgmt   — Proxmox, Ollama, management
+    └── VLAN Mgmt   — Proxmox, Inference LXC, management
 ```
+
+**Development workflow:** day-to-day coding on this repo is done with **OpenAI Codex (GPT-5.5)** as the agent, with the Hermes Agent above handling local homelab operations.
 
 **Why self-hosted:** Privacy (no data leaves home), zero latency, no API costs, and real infrastructure experience for local LLM serving and agent workflows.
 
@@ -352,7 +359,8 @@ A low-power e-ink display node showing Home Assistant data. E-paper retains the 
 | **LLM application development** | LangChain & LangGraph chains, structured output, LCEL, ReAct agents — see [`ai/`](./ai/) |
 | **AI-agent architectures** | HomelabSentinel: multi-turn tool-using agent over Proxmox + Home Assistant — see [`ai/Agent_AI/`](./ai/Agent_AI/) |
 | **Structured LLM output** | Pydantic-typed responses, validation, enum constraints — see [`ai/structure_io.py`](./ai/structure_io.py) |
-| **Local AI infrastructure** | Ollama, iGPU passthrough, Open WebUI, model management on Proxmox homelab |
+| **Local AI infrastructure** | **llama.cpp + Hermes Agent** (current, GPT-5.5), Ollama + OpenClaw (earlier), iGPU passthrough, Open WebUI, model management on Proxmox homelab |
+| **AI coding workflow** | **OpenAI Codex (GPT-5.5)** as the day-to-day coding agent for this repo and the Hermes work |
 | PCB design (KiCad) | CM5 Minima REV3 (based on open-source design, extended with ESP32-C6 Zigbee/Thread module), relay controller — schematic to production |
 | ESP32 firmware (ESPHome/C++) | 9 production devices — deep sleep, ADC, I2C, SPI, UART, I2S |
 | MQTT protocol | Fire-and-forget, retained topics, HA auto-discovery |

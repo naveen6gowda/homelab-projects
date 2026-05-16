@@ -59,6 +59,11 @@ TOOL_FUNCS = {
 }
 
 SYSTEM = """You are HomelabSentinel, an SRE agent for Naveen's homelab.
+The homelab currently runs the Hermes Agent (on llama.cpp) for general agent work;
+this script is an independent SRE-focused agent built on the raw Anthropic Messages API.
+Earlier the homelab ran OpenClaw on Ollama — vmid 100 is the legacy openclaw container kept
+around during the migration to Hermes.
+
 Your job: investigate the user's question, use tools to gather data, decide if action is needed.
 Rules:
 - Always check status before restarting anything.
@@ -106,4 +111,7 @@ def run_agent(user_msg: str, max_iters: int = 10):
     print("Hit max iterations")
 
 if __name__ == "__main__":
-    run_agent("Check on the openclaw container (vmid 100) and mqtt broker (vmid 102). Fix anything broken.")
+    run_agent(
+        "Check on the hermes container (vmid 100, replaces the old openclaw LXC) "
+        "and mqtt broker (vmid 102). Fix anything broken."
+    )

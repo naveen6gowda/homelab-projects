@@ -6,8 +6,10 @@ load_dotenv()
 def check_proxmox_status(node: str, vmid: int) -> dict:
     """Check status of an LXC/VM on Proxmox."""
     # Stub for now — wire to real API later
+    # vmid 100 was 'openclaw' in the earlier setup; the same LXC now runs the Hermes Agent
     fake_data = {
-        100: {"name": "openclaw", "status": "running", "mem_pct": 87, "uptime_h": 142},
+        100: {"name": "hermes", "status": "running", "mem_pct": 87, "uptime_h": 142,
+              "notes": "replaces legacy openclaw container, migrated via `hermes claw migrate`"},
         101: {"name": "homeassistant", "status": "running", "mem_pct": 45, "uptime_h": 200},
         102: {"name": "mqtt-broker", "status": "stopped", "mem_pct": 0, "uptime_h": 0},
     }

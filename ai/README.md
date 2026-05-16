@@ -28,7 +28,9 @@ Each file is a self-contained, runnable example.
 | Validation | **Pydantic v2** (typed structured output, schema-constrained generation) |
 | Config | `python-dotenv` (API key via `.env`, never committed) |
 | Data / analytics | `requests` · `pandas` · `matplotlib` |
-| Local inference target | **Ollama** on Proxmox LXC with iGPU passthrough — see [`ollama-lxc-setup.md`](./ollama-lxc-setup.md) |
+| Local inference target | **llama.cpp** (Vulkan) on Proxmox LXC with iGPU passthrough — current setup. Earlier: **Ollama** on the same LXC. See [`ollama-lxc-setup.md`](./ollama-lxc-setup.md). |
+| Local agent stack | **Hermes Agent** v0.13.0 on top of llama.cpp (model: **GPT-5.5**). Earlier: **OpenClaw** on Ollama, migrated via `hermes claw migrate`. |
+| Day-to-day coding agent | **OpenAI Codex** (GPT-5.5) — used as the AI coding pair-programmer for this repo and the Hermes work. |
 | Packaging (Agent_AI) | `pyproject.toml` (PEP 621), `uv`-compatible |
 
 ---
@@ -114,7 +116,7 @@ uv sync
 uv run agent_v1_raw.py
 ```
 
-For local inference (no API key, fully offline), point any of these scripts at the **Ollama LXC** described in [`ollama-lxc-setup.md`](./ollama-lxc-setup.md) — `claude-sonnet-4-6` can be swapped for `qwen2.5:3b` or `llama3.2:3b` via `ChatOllama`.
+For local inference (no API key, fully offline), point any of these scripts at the **inference LXC** described in [`ollama-lxc-setup.md`](./ollama-lxc-setup.md). Current target is **llama.cpp's `llama-server`** on `:8080`; the earlier **Ollama** endpoint on `:11434` still works the same way. `claude-sonnet-4-6` can be swapped for `qwen2.5:3b` / `llama3.2:3b` via `ChatOllama`, or for any local GGUF by pointing `ChatOpenAI(base_url=...)` at the llama-server endpoint.
 
 ---
 
@@ -148,4 +150,4 @@ Active work in progress:
 
 ---
 
-*All code here was written, run, and debugged on my own infrastructure. Where AI assistance (Claude) was used, it was as a pair-programmer — the architecture, the decisions, and the homelab integration are mine.*
+*All code here was written, run, and debugged on my own infrastructure. AI pair-programming is done with **OpenAI Codex (GPT-5.5)** as the coding agent — the architecture, the decisions, and the homelab integration are mine.*

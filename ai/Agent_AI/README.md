@@ -4,6 +4,8 @@ A multi-turn, tool-using **SRE agent for my homelab**, built directly on the Ant
 
 Given a natural-language instruction, it plans tool calls, inspects Proxmox LXC/VM state and Home Assistant entities, decides if action is needed, and sends Telegram alerts before any destructive action.
 
+This is a focused, raw-API SRE agent that runs **alongside the Hermes Agent** (the general-purpose local agent stack on the inference LXC, GPT-5.5 / ~35 tools / ~88 skills, which replaced the earlier **OpenClaw** stack on **2026-05-10**). HomelabSentinel exists as the deliberately minimal, framework-free counterpart so the full tool-use loop stays visible and easy to extend.
+
 ## Files
 
 | File | Purpose |
